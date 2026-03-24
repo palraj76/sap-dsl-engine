@@ -210,6 +210,7 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         DATA(lv_group)  = is_sql-group_by_clause.
         DATA(lv_having) = is_sql-having_clause.
         DATA(lv_order)  = is_sql-order_by_clause.
+        DATA(lv_limit)  = is_sql-row_limit.
 
         " ── Dynamic Open SQL execution ──
         IF lv_group IS NOT INITIAL AND lv_having IS NOT INITIAL.
@@ -219,25 +220,25 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
             HAVING (lv_having)
             ORDER BY (lv_order)
             INTO TABLE <lt_result>
-            UP TO is_sql-row_limit ROWS.
+            UP TO lv_limit ROWS.
         ELSEIF lv_group IS NOT INITIAL.
           SELECT (lv_fields) FROM (lv_from)
             WHERE (lv_where)
             GROUP BY (lv_group)
             ORDER BY (lv_order)
             INTO TABLE <lt_result>
-            UP TO is_sql-row_limit ROWS.
+            UP TO lv_limit ROWS.
         ELSEIF lv_where IS NOT INITIAL.
           SELECT (lv_fields) FROM (lv_from)
             WHERE (lv_where)
             ORDER BY (lv_order)
             INTO TABLE <lt_result>
-            UP TO is_sql-row_limit ROWS.
+            UP TO lv_limit ROWS.
         ELSE.
           SELECT (lv_fields) FROM (lv_from)
             ORDER BY (lv_order)
             INTO TABLE <lt_result>
-            UP TO is_sql-row_limit ROWS.
+            UP TO lv_limit ROWS.
         ENDIF.
 
         ev_dbcnt = sy-dbcnt.
