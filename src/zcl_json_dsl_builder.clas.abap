@@ -92,6 +92,12 @@ class ZCL_JSON_DSL_BUILDER definition
       returning
         value(RV_STRATEGY) type STRING .
 
+    methods TO_SQL_FIELD
+      importing
+        !IV_FIELD type STRING
+      returning
+        value(RV_SQL) type STRING .
+
     methods ESCAPE_VALUE
       importing
         !IV_VALUE type STRING
@@ -153,9 +159,9 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
     " Regular fields
     LOOP AT is_query-select_fields INTO DATA(ls_fld).
       IF ls_fld-field IS NOT INITIAL AND ls_fld-alias IS NOT INITIAL.
-        APPEND |{ ls_fld-field } AS { ls_fld-alias }| TO lt_parts.
+        APPEND |{ to_sql_field( ls_fld-field ) } AS { ls_fld-alias }| TO lt_parts.
       ELSEIF ls_fld-field IS NOT INITIAL.
-        APPEND ls_fld-field TO lt_parts.
+        APPEND to_sql_field( ls_fld-field ) TO lt_parts.
       ENDIF.
     ENDLOOP.
 
@@ -177,18 +183,18 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
         IF is_metric-field = '*'.
           rv_expr = 'COUNT( * )'.
         ELSE.
-          rv_expr = |COUNT( { is_metric-field } )|.
+          rv_expr = |COUNT( { to_sql_field( is_metric-field ) } )|.
         ENDIF.
       WHEN 'count_distinct'.
-        rv_expr = |COUNT( DISTINCT { is_metric-field } )|.
+        rv_expr = |COUNT( DISTINCT { to_sql_field( is_metric-field ) } )|.
       WHEN 'sum'.
-        rv_expr = |SUM( { is_metric-field } )|.
+        rv_expr = |SUM( { to_sql_field( is_metric-field ) } )|.
       WHEN 'avg'.
-        rv_expr = |AVG( { is_metric-field } )|.
+        rv_expr = |AVG( { to_sql_field( is_metric-field ) } )|.
       WHEN 'min'.
-        rv_expr = |MIN( { is_metric-field } )|.
+        rv_expr = |MIN( { to_sql_field( is_metric-field ) } )|.
       WHEN 'max'.
-        rv_expr = |MAX( { is_metric-field } )|.
+        rv_expr = |MAX( { to_sql_field( is_metric-field ) } )|.
     ENDCASE.
   endmethod.
 
@@ -277,12 +283,12 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
 
     " Join leaf: left op right (field-to-field comparison)
     IF is_node-left_field IS NOT INITIAL AND is_node-right_field IS NOT INITIAL.
-      rv_sql = |{ is_node-left_field } { is_node-op } { is_node-right_field }|.
+      rv_sql = |{ to_sql_field( is_node-left_field ) } { is_node-op } { to_sql_field( is_node-right_field ) }|.
       RETURN.
     ENDIF.
 
     " Filter leaf
-    DATA(lv_field) = is_node-field.
+    DATA(lv_field) = to_sql_field( is_node-field ).
 
     CASE is_node-op.
       WHEN 'IS NULL'.
@@ -332,8 +338,12 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
 
 
   method BUILD_GROUP_BY_CLAUSE.
+    DATA lt_sql_fields TYPE string_table.
     IF it_group_by IS INITIAL. RETURN. ENDIF.
-    rv_clause = concat_lines_of( table = it_group_by sep = `, ` ).
+    LOOP AT it_group_by INTO DATA(lv_fld).
+      APPEND to_sql_field( lv_fld ) TO lt_sql_fields.
+    ENDLOOP.
+    rv_clause = concat_lines_of( table = lt_sql_fields sep = `, ` ).
   endmethod.
 
 
@@ -374,7 +384,7 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
         DATA(lv_expr) = build_metric_expr( ls_met ).
         APPEND |{ lv_expr } { lv_dir }| TO lt_parts.
       ELSE.
-        APPEND |{ ls_ob-field } { lv_dir }| TO lt_parts.
+        APPEND |{ to_sql_field( ls_ob-field ) } { lv_dir }| TO lt_parts.
       ENDIF.
     ENDLOOP.
 
@@ -399,6 +409,13 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
        AND lines( is_query-group_by ) >= 2.
       rv_strategy = 'AMDP'.
     ENDIF.
+  endmethod.
+
+
+  method TO_SQL_FIELD.
+    " Convert DSL dot notation (u.BNAME) to ABAP Open SQL tilde (u~BNAME)
+    rv_sql = iv_field.
+    REPLACE ALL OCCURRENCES OF '.' IN rv_sql WITH '~'.
   endmethod.
 
 
