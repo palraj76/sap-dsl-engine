@@ -115,6 +115,17 @@ CLASS ZCL_JSON_DSL_VALIDATOR IMPLEMENTATION.
     DATA lv_table TYPE string.
     DATA lv_field TYPE string.
 
+    " Check WHITELIST_MODE config
+    DATA(lv_mode) = get_config_value( 'WHITELIST_MODE' ).
+    IF lv_mode IS INITIAL. lv_mode = 'STRICT'. ENDIF.
+
+    " In OPEN mode, skip whitelist checks entirely
+    IF lv_mode = 'OPEN'.
+      RETURN.
+    ENDIF.
+
+    " STRICT mode — full whitelist enforcement
+
     " Collect all table references
     DATA lt_tables TYPE string_table.
     LOOP AT is_query-sources INTO DATA(ls_src).
@@ -136,15 +147,22 @@ CLASS ZCL_JSON_DSL_VALIDATOR IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Check each selected field is whitelisted
+    " Check each selected field is whitelisted (supports wildcard *)
     LOOP AT is_query-select_fields INTO DATA(ls_sel).
       IF ls_sel-field IS NOT INITIAL AND ls_sel-field CS '.'.
         SPLIT ls_sel-field AT '.' INTO DATA(lv_alias) lv_field.
-        " Resolve alias to table name
         DATA(lv_tab) = resolve_alias_to_table(
           iv_alias  = lv_alias
           is_query  = is_query ).
         IF lv_tab IS NOT INITIAL.
+          " Check for wildcard entry first
+          SELECT COUNT(*) FROM zjson_dsl_wl
+            WHERE table_name = lv_tab
+              AND field_name = '*'.
+          IF sy-dbcnt > 0.
+            CONTINUE. " Wildcard — all fields allowed
+          ENDIF.
+          " Check specific field
           SELECT COUNT(*) FROM zjson_dsl_wl
             WHERE table_name = lv_tab
               AND field_name = lv_field.

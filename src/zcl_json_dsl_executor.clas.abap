@@ -67,6 +67,14 @@ class ZCL_JSON_DSL_EXECUTOR definition
         !IV_CALLER type SYUNAME
         !IV_EXEC_MS type I .
 
+    methods WRITE_ACCESS_LOG
+      importing
+        !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY
+        !IV_AUDIT_ID type SYSUUID_C32
+        !IV_CALLER type SYUNAME
+        !IV_ROW_COUNT type I
+        !IV_STATUS type C .
+
     methods GET_TIMESTAMP
       returning
         value(RV_TS) type TIMESTAMP .
@@ -439,10 +447,123 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         ENDIF.
 
         INSERT zjson_dsl_audit FROM ls_audit.
+
+        " Write field-level access log
+        DATA lv_status TYPE c LENGTH 1.
+        IF is_response-errors IS NOT INITIAL.
+          lv_status = 'E'.
+        ELSE.
+          lv_status = 'S'.
+        ENDIF.
+        write_access_log(
+          is_query     = is_query
+          iv_audit_id  = ls_audit-audit_id
+          iv_caller    = iv_caller
+          iv_row_count = is_response-meta-row_count
+          iv_status    = lv_status ).
+
         COMMIT WORK.
       CATCH cx_root.
         " Audit write failure must not break the query
     ENDTRY.
+  endmethod.
+
+
+  method WRITE_ACCESS_LOG.
+    " Write one row per table+field accessed — client-friendly audit trail
+    DATA ls_alog TYPE zjson_dsl_alog.
+    DATA lt_alog TYPE STANDARD TABLE OF zjson_dsl_alog.
+    DATA(lv_ts) = get_timestamp( ).
+
+    " Log SELECT fields
+    LOOP AT is_query-select_fields INTO DATA(ls_fld).
+      IF ls_fld-field CS '.'.
+        CLEAR ls_alog.
+        ls_alog-mandt          = sy-mandt.
+        ls_alog-log_id         = cl_system_uuid=>create_uuid_c32_static( ).
+        ls_alog-audit_id       = iv_audit_id.
+        ls_alog-exec_timestamp = lv_ts.
+        ls_alog-caller_user    = iv_caller.
+        ls_alog-query_id       = is_query-query_id.
+        SPLIT ls_fld-field AT '.' INTO DATA(lv_alias) DATA(lv_field).
+        " Resolve alias to table
+        READ TABLE is_query-sources INTO DATA(ls_src) WITH KEY alias = lv_alias.
+        IF sy-subrc = 0.
+          ls_alog-table_name = ls_src-table.
+        ELSE.
+          LOOP AT is_query-joins INTO DATA(ls_j).
+            IF ls_j-target_alias = lv_alias.
+              ls_alog-table_name = ls_j-target_table.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
+        ls_alog-field_name  = lv_field.
+        ls_alog-access_type = 'SELECT'.
+        ls_alog-row_count   = iv_row_count.
+        ls_alog-status      = iv_status.
+        APPEND ls_alog TO lt_alog.
+      ENDIF.
+    ENDLOOP.
+
+    " Log FILTER fields
+    LOOP AT is_query-filter_nodes INTO DATA(ls_node)
+      WHERE node_type = 'L' AND field IS NOT INITIAL.
+      IF ls_node-field CS '.'.
+        CLEAR ls_alog.
+        ls_alog-mandt          = sy-mandt.
+        ls_alog-log_id         = cl_system_uuid=>create_uuid_c32_static( ).
+        ls_alog-audit_id       = iv_audit_id.
+        ls_alog-exec_timestamp = lv_ts.
+        ls_alog-caller_user    = iv_caller.
+        ls_alog-query_id       = is_query-query_id.
+        SPLIT ls_node-field AT '.' INTO DATA(lv_fa) DATA(lv_ff).
+        READ TABLE is_query-sources INTO DATA(ls_src2) WITH KEY alias = lv_fa.
+        IF sy-subrc = 0.
+          ls_alog-table_name = ls_src2-table.
+        ELSE.
+          LOOP AT is_query-joins INTO DATA(ls_j2).
+            IF ls_j2-target_alias = lv_fa.
+              ls_alog-table_name = ls_j2-target_table.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
+        ls_alog-field_name  = lv_ff.
+        ls_alog-access_type = 'FILTER'.
+        ls_alog-row_count   = iv_row_count.
+        ls_alog-status      = iv_status.
+        APPEND ls_alog TO lt_alog.
+      ENDIF.
+    ENDLOOP.
+
+    " Log JOIN fields
+    LOOP AT is_query-joins INTO DATA(ls_jn).
+      LOOP AT ls_jn-on_nodes INTO DATA(ls_on)
+        WHERE node_type = 'L'.
+        IF ls_on-left_field CS '.'.
+          CLEAR ls_alog.
+          ls_alog-mandt          = sy-mandt.
+          ls_alog-log_id         = cl_system_uuid=>create_uuid_c32_static( ).
+          ls_alog-audit_id       = iv_audit_id.
+          ls_alog-exec_timestamp = lv_ts.
+          ls_alog-caller_user    = iv_caller.
+          ls_alog-query_id       = is_query-query_id.
+          ls_alog-table_name     = ls_jn-target_table.
+          SPLIT ls_on-left_field AT '.' INTO DATA(lv_ja) DATA(lv_jf).
+          ls_alog-field_name     = lv_jf.
+          ls_alog-access_type    = 'JOIN'.
+          ls_alog-row_count      = iv_row_count.
+          ls_alog-status         = iv_status.
+          APPEND ls_alog TO lt_alog.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    " Bulk insert
+    IF lt_alog IS NOT INITIAL.
+      INSERT zjson_dsl_alog FROM TABLE lt_alog.
+    ENDIF.
   endmethod.
 
 

@@ -1391,4 +1391,121 @@ This sample demonstrates v1.2 features: structured join conditions with MANDT, A
 
 ---
 
-**End of Document — v1.4 (updated 2026-03-24)**
+---
+
+## 22. Whitelist Modes (v1.5)
+
+The whitelist enforcement supports two modes, configured via `ZJSON_DSL_CONFIG`:
+
+| CONFIG_KEY | CONFIG_VALUE | Description |
+|-----------|-------------|-------------|
+| `WHITELIST_MODE` | `STRICT` | Default. Every table and field must be pre-registered in `ZJSON_DSL_WL` before queries can access them. Unauthorized access returns `DSL_WL_TABLE_001` or `DSL_WL_FIELD_002`. |
+| `WHITELIST_MODE` | `OPEN` | Whitelist checks are skipped entirely. The engine allows any table/field that the SAP service user has standard authorization for. Intended for development/testing environments. |
+
+### Wildcard support (STRICT mode)
+
+In STRICT mode, a wildcard entry allows all fields within a table without listing each one individually:
+
+```
+ZJSON_DSL_WL entries:
+┌──────────┬───────────┬───────────┐
+│ USR02    │ *         │ ZDSL_AUDIT│  ← all fields in USR02 allowed
+│ AGR_USERS│ UNAME     │ ZDSL_AUDIT│  ← only UNAME allowed
+│ AGR_USERS│ AGR_NAME  │ ZDSL_AUDIT│  ← only AGR_NAME allowed
+└──────────┴───────────┴───────────┘
+```
+
+### Recommended per-environment settings
+
+| Environment | WHITELIST_MODE | Rationale |
+|------------|----------------|-----------|
+| Our dev/test SAP | `OPEN` | No friction during development |
+| Client QA/sandbox | `STRICT` with wildcards | Test security, less maintenance |
+| Client production | `STRICT` with explicit fields | Full audit trail, client approval per field |
+
+---
+
+## 23. Field Access Log (v1.5)
+
+Every query execution writes a field-level access log to `ZJSON_DSL_ALOG`. This log is designed to be shared with the client's security team as a transparent audit trail of what the engine accessed.
+
+### Access log table: `ZJSON_DSL_ALOG`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `LOG_ID` | GUID | Unique log entry ID |
+| `AUDIT_ID` | GUID | Links to `ZJSON_DSL_AUDIT` for the parent query execution |
+| `EXEC_TIMESTAMP` | TIMESTAMP | When the query ran |
+| `CALLER_USER` | BNAME | SAP user that executed the query |
+| `QUERY_ID` | CHAR40 | Query identifier from the DSL payload |
+| `TABLE_NAME` | CHAR30 | SAP table accessed |
+| `FIELD_NAME` | CHAR30 | Specific field accessed |
+| `ACCESS_TYPE` | CHAR80 | How the field was used: `SELECT`, `FILTER`, or `JOIN` |
+| `ROW_COUNT` | INT4 | Number of rows returned by the query |
+| `STATUS` | CHAR1 | `S` = success, `E` = error |
+
+### What gets logged per query
+
+For a query like:
+```json
+{
+  "sources": [{"table": "USR02", "alias": "u"}],
+  "joins": [{"type": "left", "target": {"table": "AGR_USERS", "alias": "ru"}, "on": ...}],
+  "select": [{"field": "u.BNAME"}, {"field": "ru.AGR_NAME"}],
+  "filters": {"logic": "AND", "conditions": [{"field": "u.USTYP", "op": "=", "value": "A"}]}
+}
+```
+
+The access log would contain:
+
+| TABLE_NAME | FIELD_NAME | ACCESS_TYPE |
+|-----------|-----------|-------------|
+| USR02 | BNAME | SELECT |
+| AGR_USERS | AGR_NAME | SELECT |
+| USR02 | USTYP | FILTER |
+| AGR_USERS | UNAME | JOIN |
+| AGR_USERS | MANDT | JOIN |
+
+### Client reporting
+
+The client can query the access log via SE16 on `ZJSON_DSL_ALOG` or a custom report to answer:
+- Which tables and fields are being accessed?
+- How often is each table queried?
+- Which queries return the most rows?
+- Are there any error patterns?
+
+This log is always written regardless of `WHITELIST_MODE` setting — even in OPEN mode, every field access is recorded.
+
+---
+
+## 24. Implementation Notes (v1.5)
+
+### Deployment method: abapGit
+
+All ABAP objects are stored in abapGit-compatible format in the Git repository. Import into SAP is done via abapGit — not manual SE24/SE11 or transport.
+
+- FOLDER_LOGIC: PREFIX
+- STARTING_FOLDER: /src/
+- MASTER_LANGUAGE: E
+
+### Custom tables (updated)
+
+| Table | Description |
+|-------|-------------|
+| `ZJSON_DSL_WL` | Field whitelist per table (supports wildcard `*`) |
+| `ZJSON_DSL_ENTITY` | Semantic entity registry (JSON definitions) |
+| `ZJSON_DSL_CONFIG` | Engine configuration and guardrails |
+| `ZJSON_DSL_AUDIT` | Query execution audit log |
+| `ZJSON_DSL_ALOG` | Field-level access log (client-facing) |
+| `ZJSON_DSL_CLNT` | Client credentials (client_id → hashed secret → svc user) |
+
+### ABAP Open SQL specifics
+
+- Field references in generated SQL use tilde notation: `u~BNAME` (not dot `u.BNAME`)
+- The builder's `TO_SQL_FIELD` method converts DSL dot notation to ABAP tilde automatically
+- Dynamic Open SQL uses old syntax (INTO before FROM) for compatibility with dynamic clauses
+- Host variables do not use `@` escape in dynamic SQL context
+
+---
+
+**End of Document — v1.5 (updated 2026-03-24)**

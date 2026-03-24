@@ -108,6 +108,7 @@ Import into SAP is done via abapGit (not manual SE24/SE11 paste or transport).
 - ZJSON_DSL_ENTITY   — semantic entity registry
 - ZJSON_DSL_CONFIG   — guardrails (MAX_ROWS_ALLOWED=10000, MAX_TIMEOUT_SEC=30)
 - ZJSON_DSL_AUDIT    — Flex Mode execution audit log
+- ZJSON_DSL_ALOG     — Field-level access log (client-facing transparency)
 - ZJSON_DSL_CLNT     — client credentials (client_id → hashed secret → svc user)
 
 
