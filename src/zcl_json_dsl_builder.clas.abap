@@ -295,9 +295,7 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
 
     " Resolve value: from param or literal
     IF is_node-param IS NOT INITIAL.
-      lv_rhs = |'{ escape_value( resolve_param( iv_param = is_node-param it_params = is_node-values ) ) }'|.
-      " Fix: use the passed params table from the caller
-      " The actual params are passed through build_where_clause
+      lv_rhs = |'{ escape_value( resolve_param( iv_param = is_node-param it_params = it_params ) ) }'|.
     ENDIF.
 
     CASE is_node-op.
@@ -325,8 +323,7 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       WHEN OTHERS.
         " Simple comparison: =, !=, >, <, >=, <=
         IF is_node-param IS NOT INITIAL.
-          " Will be resolved at execution time — use placeholder
-          rv_sql = |{ lv_field } { is_node-op } '{ escape_value( is_node-param ) }'|.
+          rv_sql = |{ lv_field } { is_node-op } '{ escape_value( resolve_param( iv_param = is_node-param it_params = it_params ) ) }'|.
         ELSE.
           rv_sql = |{ lv_field } { is_node-op } '{ escape_value( is_node-value ) }'|.
         ENDIF.
