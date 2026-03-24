@@ -158,12 +158,11 @@ DSL_WL_xxx, DSL_GUARD_xxx, DSL_EXEC_xxx, DSL_DEPR_xxx
 
 ## Current status
 
-Specification complete (v1.4). Implementation not started.
-Start from Phase 1 (infrastructure).
+v1.5. All phases complete. Engine tested end-to-end in SAP.
 
 
 ## Folder structure
 
 src/               — All abapGit ABAP objects (classes, tables, structures, etc.)
-java/              — Java caller integration code
-docs/              — All specification documents (if moved from root)
+java/              — Java caller (DslClient.java — zero external dependencies)
+python/            — Python caller (dsl_client.py — uses requests library)
