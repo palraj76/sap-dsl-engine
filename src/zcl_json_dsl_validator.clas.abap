@@ -8,7 +8,7 @@ class ZCL_JSON_DSL_VALIDATOR definition
     methods VALIDATE
       importing
         !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY
-        !IV_CALLER type BNAME default SY-UNAME
+        !IV_CALLER type SYUNAME default SY-UNAME
       returning
         value(RT_ERRORS) type ZTT_DSL_ERROR
       raising
@@ -30,7 +30,7 @@ class ZCL_JSON_DSL_VALIDATOR definition
     methods VALIDATE_WHITELIST
       importing
         !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY
-        !IV_CALLER type BNAME .
+        !IV_CALLER type SYUNAME .
 
     methods VALIDATE_SEMANTIC
       importing

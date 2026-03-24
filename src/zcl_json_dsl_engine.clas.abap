@@ -8,7 +8,7 @@ class ZCL_JSON_DSL_ENGINE definition
     methods EXECUTE
       importing
         !IV_JSON type STRING
-        !IV_CALLER type BNAME default SY-UNAME
+        !IV_CALLER type SYUNAME default SY-UNAME
       returning
         value(RS_RESPONSE) type ZIF_JSON_DSL_TYPES=>TY_RESPONSE .
 

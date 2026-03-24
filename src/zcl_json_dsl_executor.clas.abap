@@ -9,7 +9,7 @@ class ZCL_JSON_DSL_EXECUTOR definition
       importing
         !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY
         !IS_SQL type ZCL_JSON_DSL_BUILDER=>TY_SQL_RESULT
-        !IV_CALLER type BNAME default SY-UNAME
+        !IV_CALLER type SYUNAME default SY-UNAME
       returning
         value(RS_RESPONSE) type ZIF_JSON_DSL_TYPES=>TY_RESPONSE
       raising
@@ -64,7 +64,7 @@ class ZCL_JSON_DSL_EXECUTOR definition
         !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY
         !IS_SQL type ZCL_JSON_DSL_BUILDER=>TY_SQL_RESULT
         !IS_RESPONSE type ZIF_JSON_DSL_TYPES=>TY_RESPONSE
-        !IV_CALLER type BNAME
+        !IV_CALLER type SYUNAME
         !IV_EXEC_MS type I .
 
     methods GET_TIMESTAMP
