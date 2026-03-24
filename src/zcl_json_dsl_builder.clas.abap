@@ -172,23 +172,23 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
 
 
   method BUILD_METRIC_EXPR.
-    CASE ls_metric-type.
+    CASE is_metric-type.
       WHEN 'count'.
-        IF ls_metric-field = '*'.
+        IF is_metric-field = '*'.
           rv_expr = 'COUNT( * )'.
         ELSE.
-          rv_expr = |COUNT( { ls_metric-field } )|.
+          rv_expr = |COUNT( { is_metric-field } )|.
         ENDIF.
       WHEN 'count_distinct'.
-        rv_expr = |COUNT( DISTINCT { ls_metric-field } )|.
+        rv_expr = |COUNT( DISTINCT { is_metric-field } )|.
       WHEN 'sum'.
-        rv_expr = |SUM( { ls_metric-field } )|.
+        rv_expr = |SUM( { is_metric-field } )|.
       WHEN 'avg'.
-        rv_expr = |AVG( { ls_metric-field } )|.
+        rv_expr = |AVG( { is_metric-field } )|.
       WHEN 'min'.
-        rv_expr = |MIN( { ls_metric-field } )|.
+        rv_expr = |MIN( { is_metric-field } )|.
       WHEN 'max'.
-        rv_expr = |MAX( { ls_metric-field } )|.
+        rv_expr = |MAX( { is_metric-field } )|.
     ENDCASE.
   endmethod.
 
