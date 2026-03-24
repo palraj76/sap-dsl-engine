@@ -10,6 +10,7 @@
     <DDTEXT>DSL Engine Configuration and Guardrails</DDTEXT>
     <MAINFLAG>X</MAINFLAG>
     <CONTFLAG>C</CONTFLAG>
+    <EXCLASS>1</EXCLASS>
    </DD02V>
    <DD09L>
     <TABNAME>ZJSON_DSL_CONFIG</TABNAME>

@@ -8,6 +8,7 @@
     <DATATYPE>CHAR</DATATYPE>
     <LENG>000010</LENG>
     <OUTPUTLEN>000010</OUTPUTLEN>
+    <LOWERCASE>X</LOWERCASE>
     <DDTEXT>DSL Version String</DDTEXT>
    </DD01V>
   </asx:values>

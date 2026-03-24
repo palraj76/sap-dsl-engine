@@ -8,6 +8,7 @@
     <TABCLASS>INTTAB</TABCLASS>
     <LANGDEP>X</LANGDEP>
     <DDTEXT>DSL Error/Warning Entry</DDTEXT>
+    <EXCLASS>1</EXCLASS>
    </DD02V>
    <DD03P_TABLE>
     <DD03P>
