@@ -162,16 +162,44 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
 
   method EXECUTE_OPEN_SQL.
-    DATA lr_result TYPE REF TO data.
-    DATA lv_sql TYPE string.
+    DATA lr_table TYPE REF TO data.
+    DATA lr_line  TYPE REF TO data.
 
-    " Build complete dynamic SQL string
-    lv_sql = build_dynamic_select( is_sql ).
-
-    " Create dynamic internal table for results
-    " For dynamic Open SQL, we use field list + INTO TABLE
     TRY.
-        " Build the full SELECT statement parts for dynamic execution
+        " ── Build dynamic result structure via RTTI ──
+        DATA lt_components TYPE cl_abap_structdescr=>component_table.
+        DATA ls_comp       LIKE LINE OF lt_components.
+
+        " One string component per select field alias
+        LOOP AT is_query-select_fields INTO DATA(ls_fld).
+          CLEAR ls_comp.
+          IF ls_fld-alias IS NOT INITIAL.
+            ls_comp-name = to_upper( ls_fld-alias ).
+          ELSE.
+            ls_comp-name = to_upper( ls_fld-field ).
+            REPLACE ALL OCCURRENCES OF '.' IN ls_comp-name WITH '_'.
+          ENDIF.
+          ls_comp-type = cl_abap_elemdescr=>get_string( ).
+          APPEND ls_comp TO lt_components.
+        ENDLOOP.
+
+        " One string component per metric alias
+        LOOP AT is_query-metrics INTO DATA(ls_met).
+          CLEAR ls_comp.
+          ls_comp-name = to_upper( ls_met-alias ).
+          ls_comp-type = cl_abap_elemdescr=>get_string( ).
+          APPEND ls_comp TO lt_components.
+        ENDLOOP.
+
+        " Create dynamic structure and table types
+        DATA(lo_struct_type) = cl_abap_structdescr=>create( lt_components ).
+        DATA(lo_table_type)  = cl_abap_tabledescr=>create( lo_struct_type ).
+
+        CREATE DATA lr_table TYPE HANDLE lo_table_type.
+        FIELD-SYMBOLS: <lt_result> TYPE STANDARD TABLE.
+        ASSIGN lr_table->* TO <lt_result>.
+
+        " ── Build SQL clauses ──
         DATA(lv_from) = is_sql-from_clause.
         IF is_sql-join_clause IS NOT INITIAL.
           lv_from = lv_from && ` ` && is_sql-join_clause.
@@ -183,43 +211,40 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         DATA(lv_having) = is_sql-having_clause.
         DATA(lv_order)  = is_sql-order_by_clause.
 
-        " Use generic result table
-        DATA lt_result TYPE STANDARD TABLE OF string.
-
-        " Dynamic Open SQL execution
+        " ── Dynamic Open SQL execution ──
         IF lv_group IS NOT INITIAL AND lv_having IS NOT INITIAL.
           SELECT (lv_fields) FROM (lv_from)
             WHERE (lv_where)
             GROUP BY (lv_group)
             HAVING (lv_having)
             ORDER BY (lv_order)
-            INTO TABLE @lt_result
-            UP TO @is_sql-row_limit ROWS.
+            INTO TABLE <lt_result>
+            UP TO is_sql-row_limit ROWS.
         ELSEIF lv_group IS NOT INITIAL.
           SELECT (lv_fields) FROM (lv_from)
             WHERE (lv_where)
             GROUP BY (lv_group)
             ORDER BY (lv_order)
-            INTO TABLE @lt_result
-            UP TO @is_sql-row_limit ROWS.
+            INTO TABLE <lt_result>
+            UP TO is_sql-row_limit ROWS.
         ELSEIF lv_where IS NOT INITIAL.
           SELECT (lv_fields) FROM (lv_from)
             WHERE (lv_where)
             ORDER BY (lv_order)
-            INTO TABLE @lt_result
-            UP TO @is_sql-row_limit ROWS.
+            INTO TABLE <lt_result>
+            UP TO is_sql-row_limit ROWS.
         ELSE.
           SELECT (lv_fields) FROM (lv_from)
             ORDER BY (lv_order)
-            INTO TABLE @lt_result
-            UP TO @is_sql-row_limit ROWS.
+            INTO TABLE <lt_result>
+            UP TO is_sql-row_limit ROWS.
         ENDIF.
 
         ev_dbcnt = sy-dbcnt.
 
-        " Convert results to name-value pair rows
+        " ── Convert results to name-value pair rows ──
         et_rows = result_to_nv_rows(
-          ir_table = REF #( lt_result )
+          ir_table = lr_table
           is_query = is_query ).
 
       CATCH cx_sy_dynamic_osql_error INTO DATA(lx_err).
