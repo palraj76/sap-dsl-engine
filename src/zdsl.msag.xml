@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="utf-8"?>
+<abapGit version="v1.0.0" serializer="LCL_OBJECT_MSAG" serializer_version="v1.0.0">
+ <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+  <asx:values>
+   <T100A>
+    <ARBGB>ZDSL</ARBGB>
+    <MASTERLANG>E</MASTERLANG>
+    <STEXT>DSL Engine Messages</STEXT>
+   </T100A>
+   <T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>001</MSGNR>
+     <TEXT>JSON is malformed: &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>002</MSGNR>
+     <TEXT>Unsupported DSL version: &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>003</MSGNR>
+     <TEXT>Missing mandatory field: &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>004</MSGNR>
+     <TEXT>Unknown top-level key: &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>005</MSGNR>
+     <TEXT>Both entity and sources/joins present - mutually exclusive</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>006</MSGNR>
+     <TEXT>Condition node missing mandatory logic field</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>010</MSGNR>
+     <TEXT>Table &amp;1 not in whitelist</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>011</MSGNR>
+     <TEXT>Field &amp;1 not allowed for table &amp;2</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>012</MSGNR>
+     <TEXT>Caller lacks required role &amp;1 for table &amp;2</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>020</MSGNR>
+     <TEXT>HAVING alias &amp;1 not found in metrics</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>021</MSGNR>
+     <TEXT>HAVING present without GROUP BY</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>022</MSGNR>
+     <TEXT>Non-aggregate select field &amp;1 missing from GROUP BY</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>023</MSGNR>
+     <TEXT>Param key &amp;1 not supplied in params block</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>024</MSGNR>
+     <TEXT>Duplicate alias: &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>025</MSGNR>
+     <TEXT>Unknown type annotation &amp;1 - defaulted to STRING</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>026</MSGNR>
+     <TEXT>JOIN on tables &amp;1 and &amp;2 missing MANDT condition</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>027</MSGNR>
+     <TEXT>Currency/unit field &amp;1 not resolvable in scope</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>028</MSGNR>
+     <TEXT>Pagination active but ORDER BY is absent</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>029</MSGNR>
+     <TEXT>IS NULL/IS NOT NULL must not carry value or param</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>030</MSGNR>
+     <TEXT>Field &amp;1 not qualified as alias.FIELDNAME</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>040</MSGNR>
+     <TEXT>Raw SQL fragment detected in &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>041</MSGNR>
+     <TEXT>Field or alias &amp;1 contains disallowed characters</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>042</MSGNR>
+     <TEXT>Operator &amp;1 not in allowed set</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>043</MSGNR>
+     <TEXT>Filter value exceeds 500 characters</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>050</MSGNR>
+     <TEXT>Requested rows (&amp;1) exceeds system maximum (&amp;2)</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>051</MSGNR>
+     <TEXT>Result set likely large - rows &amp;1 exceeds threshold &amp;2</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>052</MSGNR>
+     <TEXT>Query has &amp;1 joins - exceeds threshold &amp;2</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>060</MSGNR>
+     <TEXT>ABAP runtime exception: &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>061</MSGNR>
+     <TEXT>Query exceeded timeout of &amp;1 seconds</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>062</MSGNR>
+     <TEXT>COUNT DISTINCT fallback active - system below NW 7.40 SP08</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>063</MSGNR>
+     <TEXT>Result set truncated at &amp;1 rows</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>064</MSGNR>
+     <TEXT>Offset pagination on large table - estimated &amp;1 rows</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>065</MSGNR>
+     <TEXT>IS NULL on &amp;1 field - SAP initial value is not NULL</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>070</MSGNR>
+     <TEXT>Flat filter array deprecated - use condition tree</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>071</MSGNR>
+     <TEXT>Flat join on array deprecated - use condition tree</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>080</MSGNR>
+     <TEXT>Entity &amp;1 not found in registry</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>090</MSGNR>
+     <TEXT>Authentication failed - invalid client_id or secret</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>091</MSGNR>
+     <TEXT>Bearer token expired or invalid</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZDSL</ARBGB>
+     <MSGNR>092</MSGNR>
+     <TEXT>Method &amp;1 not allowed - use POST</TEXT>
+    </T100>
+   </T100>
+  </asx:values>
+ </asx:abap>
+</abapGit>
