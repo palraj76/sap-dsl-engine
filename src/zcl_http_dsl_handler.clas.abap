@@ -269,21 +269,21 @@ CLASS ZCL_HTTP_DSL_HANDLER IMPLEMENTATION.
 
     LOOP AT it_errors INTO DATA(ls_err).
       IF lv_first = abap_false. rv_json = rv_json && ','. ENDIF.
-      rv_json = rv_json && '{"code":"' && escape_json_string( ls_err-code )
-             && '","severity":"' && escape_json_string( ls_err-severity )
-             && '","message":"' && escape_json_string( ls_err-message ) && '"'.
+      rv_json = rv_json && '{"code":"' && escape_json_string( CONV string( ls_err-code ) )
+             && '","severity":"' && escape_json_string( CONV string( ls_err-severity ) )
+             && '","message":"' && escape_json_string( CONV string( ls_err-message ) ) && '"'.
       IF ls_err-field IS NOT INITIAL.
-        rv_json = rv_json && ',"field":"' && escape_json_string( ls_err-field ) && '"'.
+        rv_json = rv_json && ',"field":"' && escape_json_string( CONV string( ls_err-field ) ) && '"'.
       ELSE.
         rv_json = rv_json && ',"field":null'.
       ENDIF.
       IF ls_err-tabname IS NOT INITIAL.
-        rv_json = rv_json && ',"table":"' && escape_json_string( ls_err-tabname ) && '"'.
+        rv_json = rv_json && ',"table":"' && escape_json_string( CONV string( ls_err-tabname ) ) && '"'.
       ELSE.
         rv_json = rv_json && ',"table":null'.
       ENDIF.
       IF ls_err-hint IS NOT INITIAL.
-        rv_json = rv_json && ',"hint":"' && escape_json_string( ls_err-hint ) && '"'.
+        rv_json = rv_json && ',"hint":"' && escape_json_string( CONV string( ls_err-hint ) ) && '"'.
       ELSE.
         rv_json = rv_json && ',"hint":null'.
       ENDIF.

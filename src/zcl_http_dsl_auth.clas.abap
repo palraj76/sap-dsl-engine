@@ -19,12 +19,12 @@ class ZCL_HTTP_DSL_AUTH definition
         !IV_SECRET type STRING
       exporting
         !EV_VALID type ABAP_BOOL
-        !EV_SVC_USER type BNAME .
+        !EV_SVC_USER type SYUNAME .
 
     methods GENERATE_TOKEN
       importing
         !IV_CLIENT_ID type STRING
-        !IV_SVC_USER type BNAME
+        !IV_SVC_USER type SYUNAME
       returning
         value(RV_TOKEN) type STRING .
 
