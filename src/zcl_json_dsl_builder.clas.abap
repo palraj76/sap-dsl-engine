@@ -156,20 +156,18 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
   method BUILD_SELECT_CLAUSE.
     DATA lt_parts TYPE string_table.
 
-    " Regular fields
+    " Regular fields — no AS alias; ABAP maps by position to target structure
     LOOP AT is_query-select_fields INTO DATA(ls_fld).
-      IF ls_fld-field IS NOT INITIAL AND ls_fld-alias IS NOT INITIAL.
-        APPEND |{ to_sql_field( ls_fld-field ) } AS { ls_fld-alias }| TO lt_parts.
-      ELSEIF ls_fld-field IS NOT INITIAL.
+      IF ls_fld-field IS NOT INITIAL.
         APPEND to_sql_field( ls_fld-field ) TO lt_parts.
       ENDIF.
     ENDLOOP.
 
-    " Metrics
+    " Metrics — no AS alias
     LOOP AT is_query-metrics INTO DATA(ls_met).
       DATA(lv_expr) = build_metric_expr( ls_met ).
       IF lv_expr IS NOT INITIAL.
-        APPEND |{ lv_expr } AS { ls_met-alias }| TO lt_parts.
+        APPEND lv_expr TO lt_parts.
       ENDIF.
     ENDLOOP.
 
