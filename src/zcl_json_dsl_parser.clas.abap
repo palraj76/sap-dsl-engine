@@ -370,10 +370,13 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
   method SKIP_WS.
     DATA lv_c TYPE c LENGTH 1.
     DATA(lv_len) = strlen( iv_json ).
+    DATA lv_cr TYPE c LENGTH 1.
+    lv_cr = cl_abap_char_utilities=>cr_lf(1).
     WHILE cv_pos < lv_len.
       lv_c = iv_json+cv_pos(1).
       IF lv_c <> ` ` AND lv_c <> cl_abap_char_utilities=>newline
-         AND lv_c <> cl_abap_char_utilities=>horizontal_tab.
+         AND lv_c <> cl_abap_char_utilities=>horizontal_tab
+         AND lv_c <> lv_cr.
         EXIT.
       ENDIF.
       cv_pos = cv_pos + 1.
