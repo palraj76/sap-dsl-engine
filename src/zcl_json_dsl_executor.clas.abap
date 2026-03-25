@@ -178,7 +178,7 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         DATA lt_components TYPE cl_abap_structdescr=>component_table.
         DATA ls_comp       LIKE LINE OF lt_components.
 
-        " One string component per select field alias
+        " One CHAR255 component per select field — compatible with all ABAP types
         LOOP AT is_query-select_fields INTO DATA(ls_fld).
           CLEAR ls_comp.
           IF ls_fld-alias IS NOT INITIAL.
@@ -187,15 +187,15 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
             ls_comp-name = to_upper( ls_fld-field ).
             REPLACE ALL OCCURRENCES OF '.' IN ls_comp-name WITH '_'.
           ENDIF.
-          ls_comp-type = cl_abap_elemdescr=>get_string( ).
+          ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
           APPEND ls_comp TO lt_components.
         ENDLOOP.
 
-        " One string component per metric alias
+        " One CHAR255 component per metric alias
         LOOP AT is_query-metrics INTO DATA(ls_met).
           CLEAR ls_comp.
           ls_comp-name = to_upper( ls_met-alias ).
-          ls_comp-type = cl_abap_elemdescr=>get_string( ).
+          ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
           APPEND ls_comp TO lt_components.
         ENDLOOP.
 
