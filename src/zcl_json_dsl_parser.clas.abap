@@ -467,9 +467,16 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
       WHEN '['.
         skip_balanced( EXPORTING iv_json = iv_json iv_open = '[' iv_close = ']' CHANGING cv_pos = cv_pos ).
       WHEN OTHERS.
+        " Number, boolean, null — stop at delimiter or whitespace
         WHILE cv_pos < lv_len.
-          DATA(lv_c) = iv_json+cv_pos(1).
+          DATA lv_c TYPE c LENGTH 1.
+          DATA lv_cc TYPE i.
+          lv_c = iv_json+cv_pos(1).
           IF lv_c = ',' OR lv_c = '}' OR lv_c = ']'.
+            EXIT.
+          ENDIF.
+          lv_cc = cl_abap_conv_out_ce=>uccp( lv_c ).
+          IF lv_cc = 32 OR lv_cc = 9 OR lv_cc = 10 OR lv_cc = 13.
             EXIT.
           ENDIF.
           cv_pos = cv_pos + 1.
