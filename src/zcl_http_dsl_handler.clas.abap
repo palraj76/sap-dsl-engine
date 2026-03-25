@@ -14,7 +14,7 @@ class ZCL_HTTP_DSL_HANDLER definition
         !IV_TOKEN type STRING
       exporting
         !EV_VALID type ABAP_BOOL
-        !EV_SVC_USER type BNAME
+        !EV_SVC_USER type SYUNAME
         !EV_CLIENT_ID type STRING .
 
     methods SERIALIZE_RESPONSE
