@@ -70,17 +70,20 @@ CLASS ZCL_HTTP_DSL_HANDLER IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Extract and validate bearer token
-    " Try both cases — SAP ICF may lowercase header names
-    DATA(lv_auth) = server->request->get_header_field( name = 'Authorization' ).
-    IF lv_auth IS INITIAL.
-      lv_auth = server->request->get_header_field( name = 'authorization' ).
-    ENDIF.
+    " Extract bearer token
+    " SAP ICF consumes the standard Authorization header, so we
+    " support both X-DSL-Token (preferred) and Authorization as fallback
     DATA lv_token TYPE string.
-    IF lv_auth CP 'Bearer *'.
-      lv_token = lv_auth+7.
-    ELSEIF lv_auth CP 'bearer *'.
-      lv_token = lv_auth+7.
+    lv_token = server->request->get_header_field( name = 'X-DSL-Token' ).
+    IF lv_token IS INITIAL.
+      lv_token = server->request->get_header_field( name = 'x-dsl-token' ).
+    ENDIF.
+    IF lv_token IS INITIAL.
+      " Fallback: try Authorization header (works if ICF anonymous logon is configured)
+      DATA(lv_auth) = server->request->get_header_field( name = 'authorization' ).
+      IF lv_auth CP 'Bearer *' OR lv_auth CP 'bearer *'.
+        lv_token = lv_auth+7.
+      ENDIF.
     ENDIF.
 
     DATA lv_valid    TYPE abap_bool.
