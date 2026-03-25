@@ -43,6 +43,12 @@ class ZCL_JSON_DSL_PARSER definition
       returning
         value(RT_SELECT) type ZIF_JSON_DSL_TYPES=>TY_SELECT_FIELDS .
 
+    methods JSON_EXTRACT_STRING
+      importing
+        !IV_JSON type STRING
+      returning
+        value(RV_VALUE) type STRING .
+
   private section.
 
     data MV_NEXT_NODE_ID type I value 1 ##NO_TEXT.
@@ -90,12 +96,6 @@ class ZCL_JSON_DSL_PARSER definition
         !IV_JSON type STRING
       returning
         value(RT_ELEMENTS) type STRING_TABLE .
-
-    methods JSON_EXTRACT_STRING
-      importing
-        !IV_JSON type STRING
-      returning
-        value(RV_VALUE) type STRING .
 
     methods JSON_EXTRACT_INTEGER
       importing

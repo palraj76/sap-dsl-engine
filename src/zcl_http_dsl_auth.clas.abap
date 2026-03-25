@@ -74,10 +74,13 @@ CLASS ZCL_HTTP_DSL_AUTH IMPLEMENTATION.
 
     " Parse client_id and client_secret from JSON body
     DATA(lo_parser) = NEW zcl_json_dsl_parser( ).
-    DATA(lv_client_id) = lo_parser->json_extract_string(
-      lo_parser->json_extract_member( iv_json = lv_body iv_key = 'client_id' ) ).
-    DATA(lv_secret) = lo_parser->json_extract_string(
-      lo_parser->json_extract_member( iv_json = lv_body iv_key = 'client_secret' ) ).
+    DATA(lv_cid_json) = lo_parser->json_extract_member( iv_json = lv_body iv_key = 'client_id' ).
+    DATA(lv_sec_json) = lo_parser->json_extract_member( iv_json = lv_body iv_key = 'client_secret' ).
+    " Strip surrounding quotes from JSON string values
+    DATA(lv_client_id) = lv_cid_json.
+    DATA(lv_secret)    = lv_sec_json.
+    REPLACE ALL OCCURRENCES OF '"' IN lv_client_id WITH ''.
+    REPLACE ALL OCCURRENCES OF '"' IN lv_secret WITH ''.
 
     IF lv_client_id IS INITIAL OR lv_secret IS INITIAL.
       send_json_response(
@@ -158,11 +161,14 @@ CLASS ZCL_HTTP_DSL_AUTH IMPLEMENTATION.
 
 
   method GET_TOKEN_TTL.
-    SELECT SINGLE config_value INTO rv_seconds
+    DATA lv_val TYPE zdsl_de_cfval.
+    SELECT SINGLE config_value INTO lv_val
       FROM zjson_dsl_config
       WHERE config_key = 'TOKEN_TTL_SECONDS'.
 
-    IF sy-subrc <> 0 OR rv_seconds <= 0.
+    IF sy-subrc = 0 AND lv_val IS NOT INITIAL.
+      rv_seconds = lv_val.
+    ELSE.
       rv_seconds = 3600. " default 1 hour
     ENDIF.
   endmethod.

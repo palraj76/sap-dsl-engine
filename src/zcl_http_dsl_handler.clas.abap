@@ -148,14 +148,15 @@ CLASS ZCL_HTTP_DSL_HANDLER IMPLEMENTATION.
         lv_json = cl_abap_codepage=>convert_from( lv_xstr ).
 
         DATA(lo_parser) = NEW zcl_json_dsl_parser( ).
-        ev_client_id = lo_parser->json_extract_string(
-          lo_parser->json_extract_member( iv_json = lv_json iv_key = 'client_id' ) ).
-        ev_svc_user = lo_parser->json_extract_string(
-          lo_parser->json_extract_member( iv_json = lv_json iv_key = 'svc_user' ) ).
-        DATA(lv_issued_str) = lo_parser->json_extract_string(
-          lo_parser->json_extract_member( iv_json = lv_json iv_key = 'issued_at' ) ).
-        DATA(lv_ttl_str) = lo_parser->json_extract_string(
-          lo_parser->json_extract_member( iv_json = lv_json iv_key = 'ttl' ) ).
+        DATA(lv_cid) = lo_parser->json_extract_member( iv_json = lv_json iv_key = 'client_id' ).
+        DATA(lv_usr) = lo_parser->json_extract_member( iv_json = lv_json iv_key = 'svc_user' ).
+        DATA(lv_issued_str) = lo_parser->json_extract_member( iv_json = lv_json iv_key = 'issued_at' ).
+        DATA(lv_ttl_str) = lo_parser->json_extract_member( iv_json = lv_json iv_key = 'ttl' ).
+        " Strip quotes from JSON string values
+        REPLACE ALL OCCURRENCES OF '"' IN lv_cid WITH ''.
+        REPLACE ALL OCCURRENCES OF '"' IN lv_usr WITH ''.
+        ev_client_id = lv_cid.
+        ev_svc_user  = lv_usr.
 
         " Check expiry
         DATA lv_issued TYPE timestamp.
