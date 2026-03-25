@@ -221,36 +221,35 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         DATA(lv_limit)  = is_sql-row_limit.
 
         " ── Dynamic Open SQL execution (old syntax: INTO before FROM) ──
-        IF lv_group IS NOT INITIAL AND lv_having IS NOT INITIAL.
-          SELECT (lv_fields)
-            INTO TABLE <lt_result>
-            UP TO lv_limit ROWS
-            FROM (lv_from)
-            WHERE (lv_where)
-            GROUP BY (lv_group)
-            HAVING (lv_having)
-            ORDER BY (lv_order).
+        " Build SELECT based on which clauses are non-empty
+        IF lv_group IS NOT INITIAL AND lv_having IS NOT INITIAL AND lv_order IS NOT INITIAL.
+          SELECT (lv_fields) INTO TABLE <lt_result> UP TO lv_limit ROWS
+            FROM (lv_from) WHERE (lv_where)
+            GROUP BY (lv_group) HAVING (lv_having) ORDER BY (lv_order).
+        ELSEIF lv_group IS NOT INITIAL AND lv_having IS NOT INITIAL.
+          SELECT (lv_fields) INTO TABLE <lt_result> UP TO lv_limit ROWS
+            FROM (lv_from) WHERE (lv_where)
+            GROUP BY (lv_group) HAVING (lv_having).
+        ELSEIF lv_group IS NOT INITIAL AND lv_order IS NOT INITIAL.
+          SELECT (lv_fields) INTO TABLE <lt_result> UP TO lv_limit ROWS
+            FROM (lv_from) WHERE (lv_where)
+            GROUP BY (lv_group) ORDER BY (lv_order).
         ELSEIF lv_group IS NOT INITIAL.
-          SELECT (lv_fields)
-            INTO TABLE <lt_result>
-            UP TO lv_limit ROWS
-            FROM (lv_from)
-            WHERE (lv_where)
-            GROUP BY (lv_group)
-            ORDER BY (lv_order).
+          SELECT (lv_fields) INTO TABLE <lt_result> UP TO lv_limit ROWS
+            FROM (lv_from) WHERE (lv_where)
+            GROUP BY (lv_group).
+        ELSEIF lv_where IS NOT INITIAL AND lv_order IS NOT INITIAL.
+          SELECT (lv_fields) INTO TABLE <lt_result> UP TO lv_limit ROWS
+            FROM (lv_from) WHERE (lv_where) ORDER BY (lv_order).
         ELSEIF lv_where IS NOT INITIAL.
-          SELECT (lv_fields)
-            INTO TABLE <lt_result>
-            UP TO lv_limit ROWS
-            FROM (lv_from)
-            WHERE (lv_where)
-            ORDER BY (lv_order).
+          SELECT (lv_fields) INTO TABLE <lt_result> UP TO lv_limit ROWS
+            FROM (lv_from) WHERE (lv_where).
+        ELSEIF lv_order IS NOT INITIAL.
+          SELECT (lv_fields) INTO TABLE <lt_result> UP TO lv_limit ROWS
+            FROM (lv_from) ORDER BY (lv_order).
         ELSE.
-          SELECT (lv_fields)
-            INTO TABLE <lt_result>
-            UP TO lv_limit ROWS
-            FROM (lv_from)
-            ORDER BY (lv_order).
+          SELECT (lv_fields) INTO TABLE <lt_result> UP TO lv_limit ROWS
+            FROM (lv_from).
         ENDIF.
 
         ev_dbcnt = sy-dbcnt.
