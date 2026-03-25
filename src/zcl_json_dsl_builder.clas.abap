@@ -201,7 +201,7 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
     IF it_sources IS INITIAL. RETURN. ENDIF.
     " First source is the base table
     READ TABLE it_sources INDEX 1 INTO DATA(ls_base).
-    rv_clause = |{ ls_base-table } { ls_base-alias }|.
+    rv_clause = |{ ls_base-table } AS { ls_base-alias }|.
   endmethod.
 
 
@@ -220,7 +220,7 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
         it_nodes  = ls_join-on_nodes
         it_params = VALUE zif_json_dsl_types=>ty_params( ) ).
 
-      APPEND |{ lv_type } { ls_join-target_table } { ls_join-target_alias } ON { lv_on_sql }|
+      APPEND |{ lv_type } { ls_join-target_table } AS { ls_join-target_alias } ON { lv_on_sql }|
         TO lt_parts.
     ENDLOOP.
 
