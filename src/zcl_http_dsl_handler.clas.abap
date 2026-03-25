@@ -78,7 +78,7 @@ CLASS ZCL_HTTP_DSL_HANDLER IMPLEMENTATION.
     ENDIF.
 
     DATA lv_valid    TYPE abap_bool.
-    DATA lv_svc_user TYPE bname.
+    DATA lv_svc_user TYPE syuname.
     DATA lv_client_id TYPE string.
 
     IF lv_token IS INITIAL.

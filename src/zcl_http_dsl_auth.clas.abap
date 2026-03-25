@@ -67,7 +67,7 @@ CLASS ZCL_HTTP_DSL_AUTH IMPLEMENTATION.
 
   method HANDLE_TOKEN_REQUEST.
     DATA lv_valid    TYPE abap_bool.
-    DATA lv_svc_user TYPE bname.
+    DATA lv_svc_user TYPE syuname.
 
     " Read request body
     DATA(lv_body) = io_server->request->get_cdata( ).
