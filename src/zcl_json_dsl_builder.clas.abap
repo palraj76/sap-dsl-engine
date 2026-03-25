@@ -313,7 +313,7 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
         ELSEIF is_node-value IS NOT INITIAL.
           APPEND |'{ escape_value( is_node-value ) }'| TO lt_vals.
         ENDIF.
-        DATA(lv_list) = concat_lines_of( table = lt_vals sep = ` ` ).
+        DATA(lv_list) = concat_lines_of( table = lt_vals sep = `, ` ).
         rv_sql = |{ lv_field } { is_node-op } ( { lv_list } )|.
 
       WHEN 'BETWEEN'.

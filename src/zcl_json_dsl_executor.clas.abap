@@ -209,9 +209,12 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
             IF lv_tabname IS NOT INITIAL.
               lv_fieldname = lv_fname.
-              DATA(lo_field_type) = CAST cl_abap_elemdescr(
-                cl_abap_typedescr=>describe_by_name( |{ lv_tabname }-{ lv_fieldname }| ) ).
-              ls_comp-type = lo_field_type.
+              TRY.
+                  ls_comp-type = CAST cl_abap_elemdescr(
+                    cl_abap_typedescr=>describe_by_name( |{ lv_tabname }-{ lv_fieldname }| ) ).
+                CATCH cx_root.
+                  ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
+              ENDTRY.
             ELSE.
               ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
             ENDIF.
