@@ -238,6 +238,7 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
     ).
     DATA(lt_keys) = json_get_keys( lv_json ).
     LOOP AT lt_keys INTO DATA(lv_key).
+      IF lv_key IS INITIAL. CONTINUE. ENDIF.
       READ TABLE lt_allowed WITH KEY table_line = lv_key TRANSPORTING NO FIELDS.
       IF sy-subrc <> 0.
         RAISE EXCEPTION TYPE zcx_dsl_parse
