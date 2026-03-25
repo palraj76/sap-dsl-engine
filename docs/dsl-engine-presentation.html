@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAP JSON DSL Engine — Architecture &amp; Design</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; background: #0a0a1a; color: #e0e0e0; overflow: hidden; }
+
+  /* Slide container */
+  .slides { position: relative; width: 100vw; height: 100vh; }
+  .slide { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 40px 60px; opacity: 0; transform: translateX(40px); transition: all 0.5s ease; pointer-events: none; }
+  .slide.active { opacity: 1; transform: translateX(0); pointer-events: all; }
+
+  /* Navigation */
+  .nav { position: fixed; bottom: 20px; right: 30px; z-index: 100; display: flex; gap: 10px; align-items: center; }
+  .nav button { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 8px 18px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: background 0.3s; }
+  .nav button:hover { background: rgba(255,255,255,0.25); }
+  .nav .counter { color: rgba(255,255,255,0.5); font-size: 13px; min-width: 60px; text-align: center; }
+
+  /* Progress bar */
+  .progress { position: fixed; top: 0; left: 0; height: 3px; background: linear-gradient(90deg, #00d4ff, #7b2ff7); transition: width 0.4s; z-index: 100; }
+
+  /* Slide styles */
+  h1 { font-size: 42px; font-weight: 700; margin-bottom: 10px; background: linear-gradient(135deg, #00d4ff, #7b2ff7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  h2 { font-size: 32px; font-weight: 600; margin-bottom: 20px; color: #00d4ff; }
+  h3 { font-size: 22px; font-weight: 600; margin-bottom: 12px; color: #7bb8ff; }
+  .subtitle { font-size: 18px; color: rgba(255,255,255,0.6); margin-bottom: 30px; }
+  p, li { font-size: 16px; line-height: 1.7; color: #c0c0c0; }
+  ul { list-style: none; }
+  ul li::before { content: "\25B8"; color: #00d4ff; margin-right: 10px; }
+
+  /* Layout helpers */
+  .full { width: 100%; text-align: center; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; width: 100%; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; width: 100%; }
+  .card { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 24px; }
+  .card-accent { border-color: #00d4ff33; background: linear-gradient(135deg, rgba(0,212,255,0.05), rgba(123,47,247,0.05)); }
+
+  /* Diagram boxes */
+  .diagram { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+  .diagram-row { display: flex; gap: 12px; justify-content: center; align-items: center; flex-wrap: wrap; }
+  .box { background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.3); border-radius: 8px; padding: 10px 18px; font-size: 13px; font-weight: 500; text-align: center; min-width: 140px; color: #b0e0ff; }
+  .box-purple { background: rgba(123,47,247,0.1); border-color: rgba(123,47,247,0.3); color: #c8a8ff; }
+  .box-green { background: rgba(0,200,100,0.1); border-color: rgba(0,200,100,0.3); color: #a0e8c0; }
+  .box-orange { background: rgba(255,160,0,0.1); border-color: rgba(255,160,0,0.3); color: #ffd080; }
+  .box-red { background: rgba(255,60,60,0.1); border-color: rgba(255,60,60,0.3); color: #ffa0a0; }
+  .arrow { color: rgba(255,255,255,0.3); font-size: 20px; }
+  .arrow-down { color: rgba(255,255,255,0.3); font-size: 18px; }
+
+  /* Table */
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { background: rgba(0,212,255,0.15); color: #00d4ff; padding: 10px 14px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: 600; }
+  td { padding: 8px 14px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #c0c0c0; }
+  tr:hover td { background: rgba(255,255,255,0.03); }
+
+  /* Code */
+  .code { background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 16px 20px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 13px; line-height: 1.6; overflow-x: auto; color: #a8d8a8; text-align: left; white-space: pre; }
+  .code .kw { color: #c586c0; }
+  .code .str { color: #ce9178; }
+  .code .num { color: #b5cea8; }
+  .code .cmt { color: #6a9955; }
+
+  /* Tags */
+  .tag { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; margin: 2px; }
+  .tag-blue { background: rgba(0,212,255,0.2); color: #00d4ff; }
+  .tag-green { background: rgba(0,200,100,0.2); color: #60d090; }
+  .tag-red { background: rgba(255,60,60,0.2); color: #ff8080; }
+  .tag-purple { background: rgba(123,47,247,0.2); color: #b080ff; }
+  .tag-orange { background: rgba(255,160,0,0.2); color: #ffc060; }
+
+  /* ERD */
+  .erd-table { background: rgba(255,255,255,0.05); border: 1px solid rgba(0,212,255,0.3); border-radius: 8px; overflow: hidden; font-size: 12px; min-width: 160px; }
+  .erd-header { background: rgba(0,212,255,0.15); padding: 8px 12px; font-weight: 700; color: #00d4ff; text-align: center; font-size: 13px; }
+  .erd-field { padding: 4px 12px; border-top: 1px solid rgba(255,255,255,0.05); color: #b0b0b0; }
+  .erd-field.pk { color: #ffd060; }
+  .erd-field.pk::before { content: "PK "; color: #ff9020; font-weight: 700; font-size: 10px; }
+
+  /* Status indicators */
+  .status-pass { color: #60d060; }
+  .status-pass::before { content: "\2713 "; }
+
+  /* Title slide special */
+  .title-slide h1 { font-size: 52px; margin-bottom: 8px; }
+  .title-slide .version { font-size: 14px; color: rgba(255,255,255,0.3); margin-top: 20px; }
+
+  /* Keyboard hint */
+  .kbd-hint { position: fixed; bottom: 22px; left: 30px; color: rgba(255,255,255,0.25); font-size: 12px; z-index: 100; }
+  kbd { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 3px; padding: 1px 6px; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- SLIDES -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="slides" id="slides">
+
+<!-- SLIDE 1: Title -->
+<div class="slide title-slide active">
+  <div class="full">
+    <h1>SAP JSON DSL Engine</h1>
+    <p class="subtitle">A generic, JSON-driven query executor for SAP</p>
+    <div style="display:flex; gap:8px; justify-content:center; margin-top:20px;">
+      <span class="tag tag-blue">ABAP</span>
+      <span class="tag tag-green">Open SQL</span>
+      <span class="tag tag-purple">abapGit</span>
+      <span class="tag tag-orange">ICF HTTP</span>
+      <span class="tag tag-red">Security-first</span>
+    </div>
+    <p class="version">v1.5 &mdash; Architecture &amp; Design Overview</p>
+  </div>
+</div>
+
+<!-- SLIDE 2: Problem Statement -->
+<div class="slide">
+  <h2>The Problem</h2>
+  <div class="two-col">
+    <div class="card">
+      <h3>What we need</h3>
+      <ul>
+        <li>Query SAP data from external applications</li>
+        <li>Dynamic tables, fields, joins, and filters</li>
+        <li>Zero ABAP changes when query logic evolves</li>
+        <li>Works across multiple client SAP systems</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>What we must protect</h3>
+      <ul>
+        <li>Which tables we query &mdash; our competitive IP</li>
+        <li>What conditions we use &mdash; our business logic</li>
+        <li>How we process results &mdash; our product intelligence</li>
+        <li>Client SAP data &mdash; read-only, audited access</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 3: IP Separation -->
+<div class="slide">
+  <h2>IP Separation &mdash; Core Design Principle</h2>
+  <div class="two-col">
+    <div class="card card-accent">
+      <h3 style="color:#60d090">Our Network (3rd Party)</h3>
+      <ul>
+        <li>Java / Python / Node.js application</li>
+        <li>Business logic &amp; query definitions</li>
+        <li>Data processing &amp; analytics</li>
+        <li>Client registry &amp; secrets management</li>
+      </ul>
+      <p style="margin-top:12px;color:#60d090;font-weight:600;">Never visible to competitor</p>
+    </div>
+    <div class="card">
+      <h3 style="color:#ffa080">Client SAP System</h3>
+      <ul>
+        <li>ZCL_JSON_DSL_ENGINE (generic executor)</li>
+        <li>Whitelist table (client-controlled)</li>
+        <li>Audit &amp; access logs (transparent)</li>
+        <li>ICF endpoint: /sap/zdsl/query</li>
+      </ul>
+      <p style="margin-top:12px;color:#ffa080;font-weight:600;">Competitor sees: a generic query tool</p>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 4: Architecture -->
+<div class="slide">
+  <h2>System Architecture</h2>
+  <div class="diagram">
+    <div class="diagram-row">
+      <div class="box box-green" style="min-width:280px;">Java / Python / Node.js App<br><small>Business Logic + Query Definitions</small></div>
+    </div>
+    <div class="arrow-down">&darr; HTTPS POST (JSON) &darr;</div>
+    <div class="diagram-row">
+      <div class="box box-orange" style="min-width:280px;">SAP ICF Endpoint<br><small>/sap/zdsl/query + /sap/zdsl/auth</small></div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+    <div class="diagram-row">
+      <div class="box" style="min-width:280px;">ZCL_HTTP_DSL_HANDLER<br><small>Token validation + JSON I/O</small></div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+    <div class="diagram-row">
+      <div class="box box-purple" style="min-width:280px;">ZCL_JSON_DSL_ENGINE (Facade)<br><small>Parse &rarr; Resolve &rarr; Validate &rarr; Build &rarr; Execute</small></div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+    <div class="diagram-row">
+      <div class="box box-green" style="min-width:200px;">SAP Database<br><small>Open SQL / AMDP</small></div>
+      <div class="box box-orange" style="min-width:200px;">Audit + Access Logs<br><small>ZJSON_DSL_AUDIT / ALOG</small></div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 5: Engine Pipeline -->
+<div class="slide">
+  <h2>Engine Pipeline &mdash; 5 Steps</h2>
+  <div class="diagram">
+    <div class="diagram-row">
+      <div class="box" style="min-width:170px;">
+        <strong>1. PARSER</strong><br>
+        <small>JSON &rarr; Typed Query<br>Phase A Validation</small>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="box box-green" style="min-width:170px;">
+        <strong>2. RESOLVER</strong><br>
+        <small>Entity name &rarr;<br>Tables + Joins + Fields</small>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="box box-red" style="min-width:170px;">
+        <strong>3. VALIDATOR</strong><br>
+        <small>Whitelist + Semantic<br>+ Injection Defense</small>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="box box-purple" style="min-width:170px;">
+        <strong>4. BUILDER</strong><br>
+        <small>Condition Tree &rarr;<br>ABAP Open SQL</small>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="box box-orange" style="min-width:170px;">
+        <strong>5. EXECUTOR</strong><br>
+        <small>Dynamic SQL<br>Pagination + Audit</small>
+      </div>
+    </div>
+    <div style="margin-top:24px; width:100%;">
+      <div class="three-col">
+        <div class="card" style="padding:12px;">
+          <small><strong>Phase A</strong> &mdash; Structural</small><br>
+          <small>JSON valid? Version? Keys?</small>
+        </div>
+        <div class="card" style="padding:12px;">
+          <small><strong>Phase B</strong> &mdash; Semantic</small><br>
+          <small>Whitelist, GROUP BY, params</small>
+        </div>
+        <div class="card" style="padding:12px;">
+          <small><strong>Phase C</strong> &mdash; Injection</small><br>
+          <small>Regex, operators, value length</small>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 6: ABAP Class Map -->
+<div class="slide">
+  <h2>ABAP Object Map</h2>
+  <div class="two-col">
+    <div>
+      <h3>Classes (9)</h3>
+      <table>
+        <tr><td class="tag tag-blue" style="display:table-cell">ZIF_JSON_DSL_TYPES</td><td>Shared type definitions</td></tr>
+        <tr><td class="tag tag-green" style="display:table-cell">ZCL_JSON_DSL_PARSER</td><td>JSON parser + Phase A</td></tr>
+        <tr><td class="tag tag-green" style="display:table-cell">ZCL_JSON_DSL_ENTITY_RESOLVER</td><td>Entity registry lookup</td></tr>
+        <tr><td class="tag tag-red" style="display:table-cell">ZCL_JSON_DSL_VALIDATOR</td><td>Phase B + C validation</td></tr>
+        <tr><td class="tag tag-purple" style="display:table-cell">ZCL_JSON_DSL_BUILDER</td><td>SQL generation</td></tr>
+        <tr><td class="tag tag-orange" style="display:table-cell">ZCL_JSON_DSL_EXECUTOR</td><td>SQL execution + audit</td></tr>
+        <tr><td class="tag tag-blue" style="display:table-cell">ZCL_HTTP_DSL_AUTH</td><td>ICF token handler</td></tr>
+        <tr><td class="tag tag-blue" style="display:table-cell">ZCL_HTTP_DSL_HANDLER</td><td>ICF query handler</td></tr>
+        <tr><td class="tag tag-purple" style="display:table-cell">ZCL_JSON_DSL_ENGINE</td><td>Facade (entry point)</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3>Tables (6)</h3>
+      <table>
+        <tr><td>ZJSON_DSL_WL</td><td>Field whitelist</td></tr>
+        <tr><td>ZJSON_DSL_ENTITY</td><td>Entity registry</td></tr>
+        <tr><td>ZJSON_DSL_CONFIG</td><td>Guardrails config</td></tr>
+        <tr><td>ZJSON_DSL_CLNT</td><td>Client credentials</td></tr>
+        <tr><td>ZJSON_DSL_AUDIT</td><td>Execution audit log</td></tr>
+        <tr><td>ZJSON_DSL_ALOG</td><td>Field access log</td></tr>
+      </table>
+      <h3 style="margin-top:16px">Supporting</h3>
+      <table>
+        <tr><td>14 Domains</td><td>15 Data Elements</td></tr>
+        <tr><td>ZST_DSL_ERROR</td><td>ZTT_DSL_ERROR</td></tr>
+        <tr><td>ZCX_DSL_PARSE</td><td>ZCX_DSL_SECURITY</td></tr>
+        <tr><td>ZDSL (Message Class)</td><td>35 messages</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 7: ERD -->
+<div class="slide">
+  <h2>Entity Relationship Diagram</h2>
+  <div style="display:flex; gap:20px; justify-content:center; align-items:flex-start; flex-wrap:wrap;">
+    <div class="erd-table">
+      <div class="erd-header">ZJSON_DSL_WL</div>
+      <div class="erd-field pk">MANDT</div>
+      <div class="erd-field pk">TABLE_NAME</div>
+      <div class="erd-field pk">FIELD_NAME</div>
+      <div class="erd-field">ROLE_NAME</div>
+      <div class="erd-field">DESCRIPTION</div>
+    </div>
+    <div class="erd-table">
+      <div class="erd-header">ZJSON_DSL_CONFIG</div>
+      <div class="erd-field pk">MANDT</div>
+      <div class="erd-field pk">CONFIG_KEY</div>
+      <div class="erd-field">CONFIG_VALUE</div>
+      <div class="erd-field">DESCRIPTION</div>
+    </div>
+    <div class="erd-table">
+      <div class="erd-header">ZJSON_DSL_ENTITY</div>
+      <div class="erd-field pk">MANDT</div>
+      <div class="erd-field pk">ENTITY_NAME</div>
+      <div class="erd-field pk">ENTITY_VERSION</div>
+      <div class="erd-field">DESCRIPTION</div>
+      <div class="erd-field">ENTITY_JSON</div>
+      <div class="erd-field">ACTIVE</div>
+    </div>
+    <div class="erd-table">
+      <div class="erd-header">ZJSON_DSL_CLNT</div>
+      <div class="erd-field pk">MANDT</div>
+      <div class="erd-field pk">CLIENT_ID</div>
+      <div class="erd-field">SECRET_HASH</div>
+      <div class="erd-field">SVC_USER</div>
+      <div class="erd-field">ACTIVE</div>
+      <div class="erd-field">VALID_TO</div>
+    </div>
+    <div class="erd-table">
+      <div class="erd-header">ZJSON_DSL_AUDIT</div>
+      <div class="erd-field pk">MANDT</div>
+      <div class="erd-field pk">AUDIT_ID</div>
+      <div class="erd-field">EXEC_TIMESTAMP</div>
+      <div class="erd-field">CALLER_USER</div>
+      <div class="erd-field">QUERY_ID</div>
+      <div class="erd-field">SQL_GENERATED</div>
+      <div class="erd-field">STRATEGY_USED</div>
+      <div class="erd-field">ROW_COUNT</div>
+      <div class="erd-field">EXEC_TIME_MS</div>
+      <div class="erd-field">STATUS</div>
+    </div>
+    <div class="erd-table">
+      <div class="erd-header">ZJSON_DSL_ALOG</div>
+      <div class="erd-field pk">MANDT</div>
+      <div class="erd-field pk">LOG_ID</div>
+      <div class="erd-field">AUDIT_ID &rarr;</div>
+      <div class="erd-field">EXEC_TIMESTAMP</div>
+      <div class="erd-field">TABLE_NAME</div>
+      <div class="erd-field">FIELD_NAME</div>
+      <div class="erd-field">ACCESS_TYPE</div>
+      <div class="erd-field">ROW_COUNT</div>
+      <div class="erd-field">STATUS</div>
+    </div>
+  </div>
+  <p style="margin-top:16px; text-align:center; font-size:13px; color:rgba(255,255,255,0.4);">ZJSON_DSL_ALOG.AUDIT_ID &rarr; ZJSON_DSL_AUDIT.AUDIT_ID (parent query link)</p>
+</div>
+
+<!-- SLIDE 8: Data Flow -->
+<div class="slide">
+  <h2>Request / Response Data Flow</h2>
+  <div class="diagram">
+    <div class="diagram-row">
+      <div class="box box-green" style="min-width:200px;">External App<br><small>Builds JSON payload</small></div>
+      <div class="arrow">&xrarr;</div>
+      <div class="box box-orange" style="min-width:180px;">HTTPS POST<br><small>X-DSL-Token header</small></div>
+      <div class="arrow">&xrarr;</div>
+      <div class="box" style="min-width:180px;">ICF Handler<br><small>Validate token</small></div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+    <div class="diagram-row">
+      <div class="box box-purple" style="min-width:600px;">
+        Engine: Parse JSON &rarr; Resolve Entity &rarr; Validate (WL + Semantic + Injection) &rarr; Build SQL &rarr; Execute
+      </div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+    <div class="diagram-row">
+      <div class="box box-green" style="min-width:200px;">SAP Database<br><small>Dynamic Open SQL</small></div>
+      <div class="arrow">&xrarr;</div>
+      <div class="box" style="min-width:200px;">Result Rows<br><small>Name-value pairs</small></div>
+      <div class="arrow">&xrarr;</div>
+      <div class="box box-orange" style="min-width:200px;">JSON Response<br><small>data + meta + errors</small></div>
+    </div>
+    <div class="arrow-down">&darr;</div>
+    <div class="diagram-row">
+      <div class="box box-green" style="min-width:200px;">ZJSON_DSL_AUDIT<br><small>SQL + timing + status</small></div>
+      <div class="box box-orange" style="min-width:200px;">ZJSON_DSL_ALOG<br><small>Table + field + access type</small></div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 9: JSON DSL Structure -->
+<div class="slide">
+  <h2>JSON DSL Payload Structure</h2>
+  <div class="two-col">
+    <div class="code">{
+  <span class="str">"version"</span>: <span class="str">"1.3"</span>,
+  <span class="str">"query_id"</span>: <span class="str">"Q-001"</span>,
+
+  <span class="cmt">// Raw mode</span>
+  <span class="str">"sources"</span>: [{<span class="str">"table"</span>:<span class="str">"USR02"</span>, <span class="str">"alias"</span>:<span class="str">"u"</span>}],
+  <span class="str">"joins"</span>: [{<span class="str">"type"</span>:<span class="str">"left"</span>, ...}],
+
+  <span class="cmt">// OR Entity mode</span>
+  <span class="str">"entity"</span>: <span class="str">"user_access"</span>,
+
+  <span class="str">"select"</span>: [{<span class="str">"field"</span>:<span class="str">"u.BNAME"</span>, ...}],
+  <span class="str">"filters"</span>: {<span class="str">"logic"</span>:<span class="str">"AND"</span>, ...},
+  <span class="str">"group_by"</span>: [<span class="str">"u.BNAME"</span>],
+  <span class="str">"metrics"</span>: [{<span class="str">"type"</span>:<span class="str">"count"</span>, ...}],
+  <span class="str">"having"</span>: [{<span class="str">"metric"</span>:<span class="str">"cnt"</span>, ...}],
+  <span class="str">"order_by"</span>: [{<span class="str">"field"</span>:..., <span class="str">"direction"</span>:...}],
+  <span class="str">"limit"</span>: {<span class="str">"rows"</span>:<span class="num">100</span>, <span class="str">"page_size"</span>:<span class="num">50</span>},
+  <span class="str">"params"</span>: {<span class="str">"asOfDate"</span>: <span class="str">"20260324"</span>},
+  <span class="str">"output"</span>: {<span class="str">"include_summary"</span>: <span class="kw">true</span>}
+}</div>
+    <div>
+      <h3>Key Features</h3>
+      <ul>
+        <li><strong>Two modes:</strong> Raw (sources+joins) or Entity (logical name)</li>
+        <li><strong>Condition trees:</strong> AND/OR nesting at any depth</li>
+        <li><strong>Type annotations:</strong> STRING, DATE, AMOUNT, QUANTITY</li>
+        <li><strong>Param binding:</strong> Safe value injection</li>
+        <li><strong>Pagination:</strong> page_size + page_token</li>
+        <li><strong>Aggregations:</strong> COUNT, SUM, AVG, MIN, MAX</li>
+      </ul>
+      <h3 style="margin-top:20px">Supported Operators</h3>
+      <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:8px;">
+        <span class="tag tag-blue">=</span>
+        <span class="tag tag-blue">!=</span>
+        <span class="tag tag-blue">&gt;</span>
+        <span class="tag tag-blue">&lt;</span>
+        <span class="tag tag-blue">&gt;=</span>
+        <span class="tag tag-blue">&lt;=</span>
+        <span class="tag tag-green">IN</span>
+        <span class="tag tag-green">NOT IN</span>
+        <span class="tag tag-purple">IS NULL</span>
+        <span class="tag tag-purple">IS NOT NULL</span>
+        <span class="tag tag-orange">BETWEEN</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 10: Security Layers -->
+<div class="slide">
+  <h2>Security Architecture</h2>
+  <div class="three-col">
+    <div class="card">
+      <h3 style="color:#ff8080">Layer 1: Network</h3>
+      <ul>
+        <li>HTTPS only (TLS 1.2+)</li>
+        <li>VPN or IP whitelist</li>
+        <li>Pull-only (SAP never calls out)</li>
+        <li>Client firewall controlled</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:#ffc060">Layer 2: Authentication</h3>
+      <ul>
+        <li>SHA-256 hashed credentials</li>
+        <li>Short-lived bearer tokens (1h)</li>
+        <li>X-DSL-Token custom header</li>
+        <li>Per-client credential isolation</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:#60d090">Layer 3: Authorization</h3>
+      <ul>
+        <li>WHITELIST_MODE: STRICT / OPEN</li>
+        <li>Field-level whitelist (ZJSON_DSL_WL)</li>
+        <li>Wildcard (*) support per table</li>
+        <li>Role-based access (ZDSL_AUDIT)</li>
+      </ul>
+    </div>
+  </div>
+  <div class="three-col" style="margin-top:16px;">
+    <div class="card">
+      <h3 style="color:#b080ff">Layer 4: Validation</h3>
+      <ul>
+        <li>Field pattern: alias.FIELD regex</li>
+        <li>Operator allow-list only</li>
+        <li>Value length cap (500 chars)</li>
+        <li>SQL injection detection</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:#80c0ff">Layer 5: Guardrails</h3>
+      <ul>
+        <li>MAX_ROWS_ALLOWED: 10,000</li>
+        <li>MAX_TIMEOUT_SEC: 30</li>
+        <li>Join count warnings</li>
+        <li>Large table pagination alerts</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:#e0a0ff">Layer 6: Audit</h3>
+      <ul>
+        <li>Every query logged (ZJSON_DSL_AUDIT)</li>
+        <li>Every field access logged (ZJSON_DSL_ALOG)</li>
+        <li>SELECT / FILTER / JOIN tracking</li>
+        <li>Client-facing transparency reports</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 11: Error Taxonomy -->
+<div class="slide">
+  <h2>Error Code Taxonomy</h2>
+  <div class="two-col">
+    <div>
+      <table>
+        <tr><th>Category</th><th>Codes</th><th>HTTP</th></tr>
+        <tr><td><span class="tag tag-red">DSL_PARSE_xxx</span></td><td>Malformed JSON, bad version, missing fields</td><td>400</td></tr>
+        <tr><td><span class="tag tag-orange">DSL_WL_xxx</span></td><td>Table/field not whitelisted, role denied</td><td>403</td></tr>
+        <tr><td><span class="tag tag-purple">DSL_SEM_xxx</span></td><td>GROUP BY mismatch, missing params, duplicate alias</td><td>400</td></tr>
+        <tr><td><span class="tag tag-red">DSL_SEC_xxx</span></td><td>SQL injection, invalid operator, value too long</td><td>400</td></tr>
+        <tr><td><span class="tag tag-blue">DSL_GUARD_xxx</span></td><td>Row limit exceeded, join count warning</td><td>429</td></tr>
+        <tr><td><span class="tag tag-orange">DSL_EXEC_xxx</span></td><td>Runtime error, timeout, fallback warnings</td><td>500</td></tr>
+        <tr><td><span class="tag tag-green">DSL_DEPR_xxx</span></td><td>Deprecated flat array syntax</td><td>200</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3>Response Structure</h3>
+      <div class="code" style="font-size:12px;">{
+  <span class="str">"query_id"</span>: <span class="str">"Q-001"</span>,
+  <span class="str">"data"</span>: {
+    <span class="str">"rows"</span>: [...],
+    <span class="str">"aggregates"</span>: [...]
+  },
+  <span class="str">"meta"</span>: {
+    <span class="str">"row_count"</span>: <span class="num">50</span>,
+    <span class="str">"has_more"</span>: <span class="kw">true</span>,
+    <span class="str">"next_page_token"</span>: <span class="str">"eyJ..."</span>,
+    <span class="str">"execution_time_ms"</span>: <span class="num">15</span>,
+    <span class="str">"strategy_used"</span>: <span class="str">"OPEN_SQL"</span>
+  },
+  <span class="str">"warnings"</span>: [],
+  <span class="str">"errors"</span>: []
+}</div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 12: Test Scenarios -->
+<div class="slide">
+  <h2>Test Scenarios &mdash; All Passing</h2>
+  <table>
+    <tr><th>#</th><th>Test</th><th>Pattern</th><th>What It Validates</th><th>Status</th></tr>
+    <tr><td>1</td><td>LEFT JOIN</td><td>USR02 &rarr; AGR_USERS</td><td>Users shown even without roles; MANDT auto-handled</td><td class="status-pass">Pass</td></tr>
+    <tr><td>2</td><td>INNER JOIN</td><td>USR02 &rarr; AGR_USERS</td><td>Only users who have roles returned</td><td class="status-pass">Pass</td></tr>
+    <tr><td>3</td><td>Two JOINs</td><td>USR02 &rarr; AGR_USERS &rarr; AGR_1251</td><td>3-table chain, new Open SQL syntax</td><td class="status-pass">Pass</td></tr>
+    <tr><td>4</td><td>IN + Params</td><td>JOIN + IN('A','B') + param binding</td><td>Array values, param resolution from params block</td><td class="status-pass">Pass</td></tr>
+    <tr><td>5</td><td>GROUP BY</td><td>COUNT(*) per user</td><td>Aggregation with GROUP BY, metric in result rows</td><td class="status-pass">Pass</td></tr>
+    <tr><td>6</td><td>Nested AND/OR</td><td>(type=A OR B) AND (name=X OR Y OR Z)</td><td>Condition tree depth, multiple OR branches</td><td class="status-pass">Pass</td></tr>
+  </table>
+  <div style="margin-top:20px; display:flex; gap:16px;">
+    <div class="card" style="flex:1; padding:12px; text-align:center;">
+      <div style="font-size:28px; color:#60d090; font-weight:700;">6/6</div>
+      <small>Tests Passing</small>
+    </div>
+    <div class="card" style="flex:1; padding:12px; text-align:center;">
+      <div style="font-size:28px; color:#00d4ff; font-weight:700;">4-15ms</div>
+      <small>Execution Time</small>
+    </div>
+    <div class="card" style="flex:1; padding:12px; text-align:center;">
+      <div style="font-size:28px; color:#b080ff; font-weight:700;">3</div>
+      <small>Max Tables Joined</small>
+    </div>
+    <div class="card" style="flex:1; padding:12px; text-align:center;">
+      <div style="font-size:28px; color:#ffc060; font-weight:700;">2</div>
+      <small>SQL Syntax Modes</small>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 13: SQL Generation -->
+<div class="slide">
+  <h2>SQL Generation &mdash; Dual Syntax</h2>
+  <div class="two-col">
+    <div>
+      <h3>Single Table (Old Syntax)</h3>
+      <div class="code" style="font-size:12px;"><span class="cmt">-- No JOINs: space-separated, INTO before FROM</span>
+<span class="kw">SELECT</span> u~BNAME u~USTYP
+  <span class="kw">INTO TABLE</span> &lt;lt_result&gt;
+  <span class="kw">UP TO</span> <span class="num">10</span> <span class="kw">ROWS</span>
+  <span class="kw">FROM</span> USR02 <span class="kw">AS</span> u
+  <span class="kw">WHERE</span> u~USTYP = <span class="str">'A'</span></div>
+      <p style="margin-top:12px; font-size:13px;">Compatible with all ABAP releases (ECC 6.0+)</p>
+    </div>
+    <div>
+      <h3>JOINs (New Syntax)</h3>
+      <div class="code" style="font-size:12px;"><span class="cmt">-- JOINs: comma-separated, @ escape, no MANDT in ON</span>
+<span class="kw">SELECT</span> u~BNAME, ru~AGR_NAME, ru~TO_DAT
+  <span class="kw">FROM</span> USR02 <span class="kw">AS</span> u
+  <span class="kw">LEFT OUTER JOIN</span> AGR_USERS <span class="kw">AS</span> ru
+    <span class="kw">ON</span> u~BNAME = ru~UNAME
+  <span class="kw">WHERE</span> u~USTYP = <span class="str">'A'</span>
+  <span class="kw">INTO TABLE</span> @&lt;lt_result&gt;
+  <span class="kw">UP TO</span> @lv_limit <span class="kw">ROWS</span></div>
+      <p style="margin-top:12px; font-size:13px;">Required by ABAP 740+ for dynamic JOIN clauses</p>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px; padding:12px; text-align:center;">
+    <small>MANDT automatically handled by SAP in new syntax &mdash; stripped from JOIN ON by the builder</small>
+  </div>
+</div>
+
+<!-- SLIDE 14: Deployment -->
+<div class="slide">
+  <h2>Deployment &mdash; abapGit</h2>
+  <div class="two-col">
+    <div>
+      <h3>Git Repository Structure</h3>
+      <div class="code" style="font-size:12px;">sap-dsl-engine/
+  .abapgit.xml          <span class="cmt"># PREFIX, /src/, English</span>
+  src/
+    package.devc.xml     <span class="cmt"># ZDL_JSON_DSL</span>
+    zcl_*.clas.abap      <span class="cmt"># 9 class implementations</span>
+    zcl_*.clas.xml       <span class="cmt"># Class metadata</span>
+    zif_*.intf.abap      <span class="cmt"># Types interface</span>
+    zjson_dsl_*.tabl.xml <span class="cmt"># 6 custom tables</span>
+    zdsl_*.doma.xml      <span class="cmt"># 14 domains</span>
+    zdsl_*.dtel.xml      <span class="cmt"># 15 data elements</span>
+    zdsl.msag.xml        <span class="cmt"># 35 messages</span>
+  java/DslClient.java    <span class="cmt"># Java caller</span>
+  python/dsl_client.py   <span class="cmt"># Python caller</span></div>
+    </div>
+    <div>
+      <h3>Import Workflow</h3>
+      <div style="margin-top:8px;">
+        <div class="box box-green" style="margin-bottom:8px; text-align:left;">1. Clone repo in abapGit</div>
+        <div class="box" style="margin-bottom:8px; text-align:left;">2. Pull &mdash; creates all DDIC + classes</div>
+        <div class="box box-orange" style="margin-bottom:8px; text-align:left;">3. Run ZDSL_SEED_CONFIG &mdash; seed defaults</div>
+        <div class="box box-purple" style="margin-bottom:8px; text-align:left;">4. Run ZDSL_SETUP_ICF &mdash; register services</div>
+        <div class="box box-green" style="text-align:left;">5. Test via Postman or caller app</div>
+      </div>
+      <h3 style="margin-top:16px">Per Client</h3>
+      <ul>
+        <li>Same transport, different SAP hosts</li>
+        <li>Whitelist configured per client</li>
+        <li>Credentials isolated per client</li>
+        <li>No client-specific ABAP code</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 15: Summary -->
+<div class="slide title-slide">
+  <div class="full">
+    <h1>The Engine is the Pipe</h1>
+    <p class="subtitle">Our query definitions are the water</p>
+    <div style="margin-top:30px;">
+      <div class="three-col" style="max-width:700px; margin:0 auto;">
+        <div class="card" style="text-align:center; padding:16px;">
+          <div style="font-size:24px; margin-bottom:4px;">~3,500</div>
+          <small>Lines of ABAP</small>
+        </div>
+        <div class="card" style="text-align:center; padding:16px;">
+          <div style="font-size:24px; margin-bottom:4px;">0</div>
+          <small>External Dependencies</small>
+        </div>
+        <div class="card" style="text-align:center; padding:16px;">
+          <div style="font-size:24px; margin-bottom:4px;">48</div>
+          <small>abapGit Objects</small>
+        </div>
+      </div>
+    </div>
+    <p style="margin-top:30px; color:rgba(255,255,255,0.4); font-size:14px;">
+      github.com/palraj76/sap-dsl-engine
+    </p>
+  </div>
+</div>
+
+</div><!-- /slides -->
+
+<!-- Navigation -->
+<div class="nav">
+  <button onclick="prevSlide()">&larr; Prev</button>
+  <span class="counter" id="counter">1 / 15</span>
+  <button onclick="nextSlide()">Next &rarr;</button>
+</div>
+<div class="kbd-hint"><kbd>&larr;</kbd> <kbd>&rarr;</kbd> arrow keys to navigate</div>
+
+<script>
+let current = 0;
+const slides = document.querySelectorAll('.slide');
+const total = slides.length;
+
+function showSlide(n) {
+  slides[current].classList.remove('active');
+  current = Math.max(0, Math.min(n, total - 1));
+  slides[current].classList.add('active');
+  document.getElementById('counter').textContent = `${current + 1} / ${total}`;
+  document.getElementById('progress').style.width = `${((current + 1) / total) * 100}%`;
+}
+
+function nextSlide() { showSlide(current + 1); }
+function prevSlide() { showSlide(current - 1); }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); nextSlide(); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); prevSlide(); }
+  if (e.key === 'Home') { e.preventDefault(); showSlide(0); }
+  if (e.key === 'End') { e.preventDefault(); showSlide(total - 1); }
+});
+
+// Touch support
+let touchStartX = 0;
+document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+document.addEventListener('touchend', (e) => {
+  const diff = touchStartX - e.changedTouches[0].clientX;
+  if (Math.abs(diff) > 50) { diff > 0 ? nextSlide() : prevSlide(); }
+});
+</script>
+</body>
+</html>
