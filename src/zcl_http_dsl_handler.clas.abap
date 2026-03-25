@@ -112,6 +112,12 @@ CLASS ZCL_HTTP_DSL_HANDLER IMPLEMENTATION.
 
     " Read request body (DSL JSON payload)
     DATA(lv_body) = server->request->get_cdata( ).
+
+    " Strip BOM and non-printable leading characters
+    WHILE strlen( lv_body ) > 0 AND lv_body+0(1) <> '{'.
+      lv_body = lv_body+1.
+    ENDWHILE.
+
     IF lv_body IS INITIAL.
       send_json_response(
         io_server = server
