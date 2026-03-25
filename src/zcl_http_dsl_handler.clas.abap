@@ -71,9 +71,15 @@ CLASS ZCL_HTTP_DSL_HANDLER IMPLEMENTATION.
     ENDIF.
 
     " Extract and validate bearer token
+    " Try both cases — SAP ICF may lowercase header names
     DATA(lv_auth) = server->request->get_header_field( name = 'Authorization' ).
+    IF lv_auth IS INITIAL.
+      lv_auth = server->request->get_header_field( name = 'authorization' ).
+    ENDIF.
     DATA lv_token TYPE string.
     IF lv_auth CP 'Bearer *'.
+      lv_token = lv_auth+7.
+    ELSEIF lv_auth CP 'bearer *'.
       lv_token = lv_auth+7.
     ENDIF.
 
