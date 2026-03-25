@@ -159,6 +159,8 @@ DSL_WL_xxx, DSL_GUARD_xxx, DSL_EXEC_xxx, DSL_DEPR_xxx
 ## Current status
 
 v1.5. All phases complete. Engine tested end-to-end in SAP.
+Tested: single table, LEFT JOIN, INNER JOIN, two JOINs, GROUP BY + COUNT,
+nested AND/OR filters, IN clause, param binding, pagination, HTTP via Postman.
 
 
 ## Folder structure
