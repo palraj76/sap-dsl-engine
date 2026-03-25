@@ -175,10 +175,12 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
     TRY.
         " ── Build dynamic result structure via RTTI ──
+        " Look up actual DDIC field types for type-safe SELECT
         DATA lt_components TYPE cl_abap_structdescr=>component_table.
         DATA ls_comp       LIKE LINE OF lt_components.
+        DATA lv_tabname    TYPE tabname.
+        DATA lv_fieldname  TYPE fieldname.
 
-        " One CHAR255 component per select field — compatible with all ABAP types
         LOOP AT is_query-select_fields INTO DATA(ls_fld).
           CLEAR ls_comp.
           IF ls_fld-alias IS NOT INITIAL.
@@ -187,15 +189,44 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
             ls_comp-name = to_upper( ls_fld-field ).
             REPLACE ALL OCCURRENCES OF '.' IN ls_comp-name WITH '_'.
           ENDIF.
-          ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
+
+          " Resolve actual DDIC type from table~field
+          IF ls_fld-field CS '.'.
+            SPLIT ls_fld-field AT '.' INTO DATA(lv_alias) DATA(lv_fname).
+            " Resolve alias to table
+            CLEAR lv_tabname.
+            READ TABLE is_query-sources INTO DATA(ls_src) WITH KEY alias = lv_alias.
+            IF sy-subrc = 0.
+              lv_tabname = ls_src-table.
+            ELSE.
+              LOOP AT is_query-joins INTO DATA(ls_j).
+                IF ls_j-target_alias = lv_alias.
+                  lv_tabname = ls_j-target_table.
+                  EXIT.
+                ENDIF.
+              ENDLOOP.
+            ENDIF.
+
+            IF lv_tabname IS NOT INITIAL.
+              lv_fieldname = lv_fname.
+              DATA(lo_field_type) = CAST cl_abap_elemdescr(
+                cl_abap_typedescr=>describe_by_name( |{ lv_tabname }-{ lv_fieldname }| ) ).
+              ls_comp-type = lo_field_type.
+            ELSE.
+              ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
+            ENDIF.
+          ELSE.
+            ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
+          ENDIF.
+
           APPEND ls_comp TO lt_components.
         ENDLOOP.
 
-        " One CHAR255 component per metric alias
+        " Metrics: use packed decimal for aggregation results
         LOOP AT is_query-metrics INTO DATA(ls_met).
           CLEAR ls_comp.
           ls_comp-name = to_upper( ls_met-alias ).
-          ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
+          ls_comp-type = cl_abap_elemdescr=>get_p( p_length = 8 p_decimals = 0 ).
           APPEND ls_comp TO lt_components.
         ENDLOOP.
 
