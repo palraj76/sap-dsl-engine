@@ -171,7 +171,12 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    rv_clause = concat_lines_of( table = lt_parts sep = ` ` ).
+    " Separator: commas for JOINs (new syntax), spaces for single table (old syntax)
+    IF is_query-joins IS NOT INITIAL.
+      rv_clause = concat_lines_of( table = lt_parts sep = `, ` ).
+    ELSE.
+      rv_clause = concat_lines_of( table = lt_parts sep = ` ` ).
+    ENDIF.
   endmethod.
 
 
@@ -216,8 +221,14 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
         WHEN OTHERS.  lv_type = 'INNER JOIN'.
       ENDCASE.
 
+      " Filter out MANDT conditions — SAP handles client automatically in new syntax
+      DATA lt_on_nodes TYPE zif_json_dsl_types=>ty_cond_nodes.
+      lt_on_nodes = ls_join-on_nodes.
+      DELETE lt_on_nodes WHERE node_type = 'L'
+        AND ( left_field CS 'MANDT' OR right_field CS 'MANDT' ).
+
       DATA(lv_on_sql) = build_where_clause(
-        it_nodes  = ls_join-on_nodes
+        it_nodes  = lt_on_nodes
         it_params = VALUE zif_json_dsl_types=>ty_params( ) ).
 
       APPEND |{ lv_type } { ls_join-target_table } AS { ls_join-target_alias } ON { lv_on_sql }|
