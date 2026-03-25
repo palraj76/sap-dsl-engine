@@ -256,13 +256,15 @@ CLASS ZCL_HTTP_DSL_HANDLER IMPLEMENTATION.
 
   method SERIALIZE_ROWS.
     rv_json = '['.
-    DATA lv_first_row TYPE abap_bool VALUE abap_true.
+    DATA lv_first_row TYPE abap_bool.
+    DATA lv_first_fld TYPE abap_bool.
+    lv_first_row = abap_true.
 
     LOOP AT it_rows INTO DATA(lt_nv).
       IF lv_first_row = abap_false. rv_json = rv_json && ','. ENDIF.
       rv_json = rv_json && '{'.
 
-      DATA lv_first_fld TYPE abap_bool VALUE abap_true.
+      lv_first_fld = abap_true.
       LOOP AT lt_nv INTO DATA(ls_nv).
         IF lv_first_fld = abap_false. rv_json = rv_json && ','. ENDIF.
         rv_json = rv_json && '"' && escape_json_string( ls_nv-name )
