@@ -397,7 +397,7 @@ CLASS ZCL_JSON_DSL_TEST IMPLEMENTATION.
     DATA(ls_sql) = lo_builder->build( ls_query ).
 
     " Must not contain dots in SQL output
-    cl_abap_unit_assert=>assert_char_not_cp( act = ls_sql-select_clause exp = '*.*' ).
+    cl_abap_unit_assert=>assert_char_np( act = ls_sql-select_clause exp = '*.*' ).
     cl_abap_unit_assert=>assert_char_cp( act = ls_sql-select_clause exp = '*~*' ).
   endmethod.
 
