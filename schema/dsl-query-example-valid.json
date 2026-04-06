@@ -1,0 +1,40 @@
+{
+  "_comment": "Valid DSL query example — use as reference",
+  "version": "1.3",
+  "query_id": "Q-EXAMPLE-001",
+  "sources": [
+    {"table": "USR02", "alias": "u"}
+  ],
+  "joins": [
+    {
+      "type": "left",
+      "target": {"table": "AGR_USERS", "alias": "ru"},
+      "on": {
+        "logic": "AND",
+        "conditions": [
+          {"left": "u.BNAME", "op": "=", "right": "ru.UNAME"},
+          {"left": "u.MANDT", "op": "=", "right": "ru.MANDT"}
+        ]
+      }
+    }
+  ],
+  "select": [
+    {"field": "u.BNAME", "alias": "user", "type": "STRING"},
+    {"field": "ru.AGR_NAME", "alias": "role", "type": "STRING"}
+  ],
+  "metrics": [
+    {"type": "count", "field": "*", "alias": "total"}
+  ],
+  "filters": {
+    "logic": "AND",
+    "conditions": [
+      {"field": "u.USTYP", "op": "IN", "value": ["A", "B"]},
+      {"field": "ru.TO_DAT", "op": ">=", "param": "cutoffDate"}
+    ]
+  },
+  "group_by": ["u.BNAME"],
+  "params": {"cutoffDate": "20260101"},
+  "order_by": [{"field": "u.BNAME", "direction": "asc"}],
+  "limit": {"rows": 100, "page_size": 50},
+  "output": {"include_rows": true, "include_aggregates": true}
+}

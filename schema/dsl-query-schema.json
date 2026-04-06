@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/palraj76/sap-dsl-engine/schema/dsl-query-schema.json",
+  "title": "SAP JSON DSL Query",
+  "description": "Schema for SAP JSON DSL Engine query payloads (v1.3)",
+  "type": "object",
+  "required": ["version", "select"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": ["1.2", "1.3"],
+      "description": "DSL version. Must be 1.2 or 1.3"
+    },
+    "query_id": {
+      "type": "string",
+      "maxLength": 40,
+      "description": "Optional query identifier for tracing"
+    },
+    "entity": {
+      "type": "string",
+      "maxLength": 40,
+      "description": "Semantic entity name (entity mode). Mutually exclusive with sources/joins"
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Base tables (raw mode). Mutually exclusive with entity",
+      "items": {
+        "type": "object",
+        "required": ["table", "alias"],
+        "additionalProperties": false,
+        "properties": {
+          "table": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_/]*$",
+            "description": "SAP table name"
+          },
+          "alias": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+            "description": "Table alias used in field references"
+          }
+        }
+      }
+    },
+    "joins": {
+      "type": "array",
+      "description": "JOIN definitions with structured ON conditions",
+      "items": {
+        "type": "object",
+        "required": ["type", "target", "on"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["inner", "left"],
+            "description": "Join type"
+          },
+          "target": {
+            "type": "object",
+            "required": ["table", "alias"],
+            "additionalProperties": false,
+            "properties": {
+              "table": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_/]*$" },
+              "alias": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$" }
+            }
+          },
+          "on": { "$ref": "#/$defs/conditionTree" }
+        }
+      }
+    },
+    "select": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Fields to retrieve",
+      "items": {
+        "type": "object",
+        "anyOf": [
+          { "required": ["field"] },
+          { "required": ["alias"] }
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*\\.[A-Za-z][A-Za-z0-9_]*$",
+            "description": "Alias-qualified field: alias.FIELDNAME"
+          },
+          "alias": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+            "description": "Output alias name"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["STRING", "DATE", "AMOUNT", "CURRENCY", "QUANTITY", "UNIT", "NUMBER", "BOOLEAN", "TIMESTAMP"],
+            "description": "Field type annotation"
+          },
+          "currency_field": {
+            "type": "string",
+            "description": "Companion currency field for AMOUNT type"
+          },
+          "unit_field": {
+            "type": "string",
+            "description": "Companion unit field for QUANTITY type"
+          }
+        }
+      }
+    },
+    "filters": {
+      "$ref": "#/$defs/conditionTree",
+      "description": "WHERE conditions as a nested AND/OR tree"
+    },
+    "group_by": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9_]*\\.[A-Za-z][A-Za-z0-9_]*$"
+      },
+      "description": "GROUP BY fields (alias.FIELDNAME format)"
+    },
+    "metrics": {
+      "type": "array",
+      "description": "Aggregate functions",
+      "items": {
+        "type": "object",
+        "required": ["type", "field", "alias"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["count", "count_distinct", "sum", "avg", "min", "max"],
+            "description": "Aggregation type"
+          },
+          "field": {
+            "type": "string",
+            "description": "Field to aggregate (* for count)"
+          },
+          "alias": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+            "description": "Result alias"
+          }
+        }
+      }
+    },
+    "having": {
+      "type": "array",
+      "description": "HAVING conditions on metric aliases",
+      "items": {
+        "type": "object",
+        "required": ["metric", "op", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "metric": { "type": "string", "description": "Must match a metrics alias" },
+          "op": { "type": "string", "enum": ["=", "!=", ">", "<", ">=", "<="] },
+          "value": { "type": ["string", "number"] }
+        }
+      }
+    },
+    "order_by": {
+      "type": "array",
+      "description": "Sort order. Mandatory when using pagination offset",
+      "items": {
+        "type": "object",
+        "required": ["field", "direction"],
+        "additionalProperties": false,
+        "properties": {
+          "field": { "type": "string" },
+          "direction": { "type": "string", "enum": ["asc", "desc"] }
+        }
+      }
+    },
+    "limit": {
+      "type": "object",
+      "description": "Row limiting and pagination",
+      "additionalProperties": false,
+      "properties": {
+        "rows": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "offset": { "type": "integer", "minimum": 0 },
+        "page_size": { "type": "integer", "minimum": 1 },
+        "page_token": { "type": ["string", "null"] }
+      }
+    },
+    "params": {
+      "type": "object",
+      "description": "Parameter values for param-referenced filter conditions",
+      "additionalProperties": { "type": "string" }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include_rows": { "type": "boolean", "default": true },
+        "include_aggregates": { "type": "boolean", "default": true },
+        "include_summary": { "type": "boolean", "default": false }
+      }
+    }
+  },
+  "oneOf": [
+    { "required": ["sources"] },
+    { "required": ["entity"] }
+  ],
+  "not": {
+    "required": ["entity", "sources"]
+  },
+  "$defs": {
+    "conditionTree": {
+      "type": "object",
+      "required": ["logic", "conditions"],
+      "additionalProperties": false,
+      "properties": {
+        "logic": {
+          "type": "string",
+          "enum": ["AND", "OR"],
+          "description": "How conditions in this node are combined"
+        },
+        "conditions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/conditionTree" },
+              { "$ref": "#/$defs/filterLeaf" },
+              { "$ref": "#/$defs/joinLeaf" }
+            ]
+          }
+        }
+      }
+    },
+    "filterLeaf": {
+      "type": "object",
+      "required": ["field", "op"],
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*\\.[A-Za-z][A-Za-z0-9_]*$"
+        },
+        "op": {
+          "type": "string",
+          "enum": ["=", "!=", ">", "<", ">=", "<=", "IN", "NOT IN", "IS NULL", "IS NOT NULL", "BETWEEN"]
+        },
+        "value": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "array", "items": { "type": ["string", "number"] } }
+          ]
+        },
+        "param": {
+          "type": "string",
+          "description": "Key from params block"
+        }
+      }
+    },
+    "joinLeaf": {
+      "type": "object",
+      "required": ["left", "op", "right"],
+      "additionalProperties": false,
+      "properties": {
+        "left": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*\\.[A-Za-z][A-Za-z0-9_]*$"
+        },
+        "op": { "type": "string", "enum": ["=", "!=", ">", "<", ">=", "<="] },
+        "right": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*\\.[A-Za-z][A-Za-z0-9_]*$"
+        }
+      }
+    }
+  }
+}

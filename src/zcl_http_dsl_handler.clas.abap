@@ -60,13 +60,24 @@ CLASS ZCL_HTTP_DSL_HANDLER IMPLEMENTATION.
 
 
   method IF_HTTP_EXTENSION~HANDLE_REQUEST.
-    " Only accept POST
     DATA(lv_method) = server->request->get_header_field( name = '~request_method' ).
+
+    " GET returns the expected JSON template (schema help)
+    IF lv_method = 'GET'.
+      send_json_response(
+        io_server = server
+        iv_status = 200
+        iv_json   = '{"message":"SAP JSON DSL Engine v1.5 — POST your query here",' &&
+                    '"template":' && zcl_json_dsl_engine=>get_template( ) && '}' ).
+      RETURN.
+    ENDIF.
+
+    " Only accept POST for queries
     IF lv_method <> 'POST'.
       send_json_response(
         io_server = server
         iv_status = 405
-        iv_json   = '{"errors":[{"code":"HTTP_405","message":"Method not allowed - use POST"}]}' ).
+        iv_json   = '{"errors":[{"code":"HTTP_405","message":"Method not allowed - use POST or GET for schema"}]}' ).
       RETURN.
     ENDIF.
 

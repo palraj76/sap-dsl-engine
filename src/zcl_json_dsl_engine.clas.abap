@@ -12,6 +12,16 @@ class ZCL_JSON_DSL_ENGINE definition
       returning
         value(RS_RESPONSE) type ZIF_JSON_DSL_TYPES=>TY_RESPONSE .
 
+    methods GET_EXPECTED_FORMAT
+      importing
+        !IV_ERROR_CODE type ZDSL_DE_ECODE
+      returning
+        value(RV_HINT) type STRING .
+
+    class-methods GET_TEMPLATE
+      returning
+        value(RV_JSON) type STRING .
+
   private section.
 ENDCLASS.
 
@@ -35,6 +45,7 @@ CLASS ZCL_JSON_DSL_ENGINE IMPLEMENTATION.
           code     = lx_parse->mv_error_code
           severity = 'ERROR'
           message  = lx_parse->get_text( )
+          hint     = get_expected_format( lx_parse->mv_error_code )
         ) TO rs_response-errors.
         RETURN.
     ENDTRY.
@@ -110,5 +121,63 @@ CLASS ZCL_JSON_DSL_ENGINE IMPLEMENTATION.
 
     " Always set query_id
     rs_response-query_id = ls_query-query_id.
+  endmethod.
+
+
+  method GET_EXPECTED_FORMAT.
+    CASE iv_error_code.
+      WHEN 'DSL_PARSE_001'.
+        rv_hint = 'Request body must be a valid JSON object starting with {'.
+      WHEN 'DSL_PARSE_002'.
+        rv_hint = 'Supported versions: "1.2", "1.3". Set "version":"1.3"'.
+      WHEN 'DSL_PARSE_003'.
+        rv_hint = 'Required fields: version, select, and either sources or entity. ' &&
+                  'Call GET_TEMPLATE() for the expected JSON structure.'.
+      WHEN 'DSL_PARSE_004'.
+        rv_hint = 'Allowed top-level keys: version, query_id, entity, sources, joins, ' &&
+                  'select, filters, group_by, metrics, having, order_by, limit, params, output. ' &&
+                  'Check for typos (e.g. dataSources should be sources, operator should be op, ' &&
+                  'groupBy should be group_by, aggregations should be metrics).'.
+      WHEN 'DSL_PARSE_005'.
+        rv_hint = 'Use either "entity" (entity mode) OR "sources"/"joins" (raw mode), not both.'.
+      WHEN 'DSL_PARSE_006'.
+        rv_hint = 'Every condition node must have "logic":"AND" or "logic":"OR" and a "conditions" array.'.
+      WHEN OTHERS.
+        rv_hint = 'Call GET_TEMPLATE() for the expected JSON structure.'.
+    ENDCASE.
+  endmethod.
+
+
+  method GET_TEMPLATE.
+    " Returns a valid DSL JSON template that callers can use as reference
+    rv_json =
+      '{' &&
+      '  "version": "1.3",' &&
+      '  "query_id": "Q-001",' &&
+      '  "sources": [{"table": "TABLE_NAME", "alias": "t"}],' &&
+      '  "joins": [{"type": "left|inner", "target": {"table": "JOIN_TABLE", "alias": "j"},' &&
+      '    "on": {"logic": "AND", "conditions": [' &&
+      '      {"left": "t.KEY_FIELD", "op": "=", "right": "j.KEY_FIELD"},' &&
+      '      {"left": "t.MANDT", "op": "=", "right": "j.MANDT"}' &&
+      '    ]}}],' &&
+      '  "select": [' &&
+      '    {"field": "t.FIELD1", "alias": "output_name", "type": "STRING|DATE|NUMBER"}' &&
+      '  ],' &&
+      '  "metrics": [' &&
+      '    {"type": "count|count_distinct|sum|avg|min|max", "field": "*", "alias": "metric_name"}' &&
+      '  ],' &&
+      '  "filters": {"logic": "AND", "conditions": [' &&
+      '    {"field": "t.FIELD", "op": "=|!=|>|<|>=|<=|IN|NOT IN|IS NULL|IS NOT NULL|BETWEEN", "value": "X"},' &&
+      '    {"field": "t.FIELD", "op": "IN", "value": ["A","B"]},' &&
+      '    {"field": "t.FIELD", "op": ">=", "param": "paramKey"},' &&
+      '    {"logic": "OR", "conditions": [{"field": "t.F1", "op": "=", "value": "X"}, {"field": "t.F2", "op": "=", "value": "Y"}]}' &&
+      '  ]},' &&
+      '  "group_by": ["t.FIELD1"],' &&
+      '  "having": [{"metric": "metric_name", "op": ">", "value": "5"}],' &&
+      '  "order_by": [{"field": "t.FIELD1", "direction": "asc|desc"}],' &&
+      '  "limit": {"rows": 100, "page_size": 50, "offset": 0},' &&
+      '  "params": {"paramKey": "value"},' &&
+      '  "output": {"include_rows": true, "include_aggregates": true, "include_summary": false}' &&
+      '}'.
   endmethod.
 ENDCLASS.
