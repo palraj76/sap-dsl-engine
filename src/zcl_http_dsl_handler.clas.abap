@@ -209,6 +209,20 @@ CLASS ZCL_HTTP_DSL_HANDLER IMPLEMENTATION.
     " Build JSON response manually for full control
     rv_json = '{"query_id":"' && escape_json_string( is_response-query_id ) && '"'.
 
+    " Metadata — pass through if present
+    IF is_response-metric_name IS NOT INITIAL.
+      rv_json = rv_json && ',"metricName":"' && escape_json_string( is_response-metric_name ) && '"'.
+    ENDIF.
+    IF is_response-metric_id IS NOT INITIAL.
+      rv_json = rv_json && ',"metricId":"' && escape_json_string( is_response-metric_id ) && '"'.
+    ENDIF.
+    IF is_response-priority IS NOT INITIAL.
+      rv_json = rv_json && ',"priority":"' && escape_json_string( is_response-priority ) && '"'.
+    ENDIF.
+    IF is_response-module IS NOT INITIAL.
+      rv_json = rv_json && ',"module":"' && escape_json_string( is_response-module ) && '"'.
+    ENDIF.
+
     " Data section
     rv_json = rv_json && ',"data":{"rows":'.
     rv_json = rv_json && serialize_rows( is_response-rows ).

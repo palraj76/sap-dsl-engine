@@ -235,6 +235,8 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
       ( `version` ) ( `query_id` ) ( `entity` ) ( `sources` ) ( `joins` )
       ( `select` ) ( `filters` ) ( `group_by` ) ( `metrics` ) ( `having` )
       ( `order_by` ) ( `limit` ) ( `params` ) ( `output` )
+      " Metadata fields — passed through for tracing/logging
+      ( `metricName` ) ( `metricId` ) ( `priority` ) ( `description` ) ( `module` )
     ).
     DATA(lt_keys) = json_get_keys( lv_json ).
     LOOP AT lt_keys INTO DATA(lv_key).
@@ -248,10 +250,27 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " 4. query_id
+    " 4. query_id and metadata
     DATA(lv_qid_json) = json_extract_member( iv_json = lv_json iv_key = 'query_id' ).
     IF lv_qid_json IS NOT INITIAL.
       rs_query-query_id = json_extract_string( lv_qid_json ).
+    ENDIF.
+
+    " Metadata — pass through for tracing
+    DATA(lv_mn) = json_extract_member( iv_json = lv_json iv_key = 'metricName' ).
+    IF lv_mn IS NOT INITIAL. rs_query-metric_name = json_extract_string( lv_mn ). ENDIF.
+    DATA(lv_mi) = json_extract_member( iv_json = lv_json iv_key = 'metricId' ).
+    IF lv_mi IS NOT INITIAL. rs_query-metric_id = json_extract_string( lv_mi ). ENDIF.
+    DATA(lv_pr) = json_extract_member( iv_json = lv_json iv_key = 'priority' ).
+    IF lv_pr IS NOT INITIAL. rs_query-priority = json_extract_string( lv_pr ). ENDIF.
+    DATA(lv_ds) = json_extract_member( iv_json = lv_json iv_key = 'description' ).
+    IF lv_ds IS NOT INITIAL. rs_query-description = json_extract_string( lv_ds ). ENDIF.
+    DATA(lv_mo) = json_extract_member( iv_json = lv_json iv_key = 'module' ).
+    IF lv_mo IS NOT INITIAL. rs_query-module = json_extract_string( lv_mo ). ENDIF.
+
+    " Use metricId as query_id if query_id not provided
+    IF rs_query-query_id IS INITIAL AND rs_query-metric_id IS NOT INITIAL.
+      rs_query-query_id = rs_query-metric_id.
     ENDIF.
 
     " 5. Entity vs sources mutual exclusivity

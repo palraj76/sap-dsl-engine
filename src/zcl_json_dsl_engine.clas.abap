@@ -119,8 +119,12 @@ CLASS ZCL_JSON_DSL_ENGINE IMPLEMENTATION.
         ) TO rs_response-errors.
     ENDTRY.
 
-    " Always set query_id
-    rs_response-query_id = ls_query-query_id.
+    " Always set query_id and metadata
+    rs_response-query_id    = ls_query-query_id.
+    rs_response-metric_name = ls_query-metric_name.
+    rs_response-metric_id   = ls_query-metric_id.
+    rs_response-priority    = ls_query-priority.
+    rs_response-module      = ls_query-module.
   endmethod.
 
 

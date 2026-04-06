@@ -118,6 +118,12 @@ interface ZIF_JSON_DSL_TYPES
       params        TYPE ty_params,
       output        TYPE ty_output,
       warnings      TYPE ztt_dsl_error,
+      " Metadata — passed through for tracing/logging
+      metric_name   TYPE string,
+      metric_id     TYPE string,
+      priority      TYPE string,
+      description   TYPE string,
+      module        TYPE string,
     END OF ty_query .
 
   " ─── Response types ───
@@ -152,12 +158,16 @@ interface ZIF_JSON_DSL_TYPES
 
   types:
     BEGIN OF ty_response,
-      query_id   TYPE string,
-      rows       TYPE ty_result_rows,
-      aggregates TYPE ty_aggregates,
-      meta       TYPE ty_meta,
-      warnings   TYPE ztt_dsl_error,
-      errors     TYPE ztt_dsl_error,
+      query_id    TYPE string,
+      metric_name TYPE string,
+      metric_id   TYPE string,
+      priority    TYPE string,
+      module      TYPE string,
+      rows        TYPE ty_result_rows,
+      aggregates  TYPE ty_aggregates,
+      meta        TYPE ty_meta,
+      warnings    TYPE ztt_dsl_error,
+      errors      TYPE ztt_dsl_error,
     END OF ty_response .
 
 endinterface.
