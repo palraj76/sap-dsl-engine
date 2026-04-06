@@ -209,12 +209,27 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
             IF lv_tabname IS NOT INITIAL.
               lv_fieldname = lv_fname.
-              TRY.
-                  ls_comp-type = CAST cl_abap_elemdescr(
-                    cl_abap_typedescr=>describe_by_name( |{ lv_tabname }-{ lv_fieldname }| ) ).
-                CATCH cx_root.
-                  ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
-              ENDTRY.
+              " Check if table-field exists in DDIC before calling describe_by_name
+              DATA lv_exists TYPE abap_bool.
+              lv_exists = abap_false.
+              SELECT COUNT(*) FROM dd03l
+                WHERE tabname   = lv_tabname
+                  AND fieldname = lv_fieldname
+                  AND as4local  = 'A'.
+              IF sy-dbcnt > 0.
+                lv_exists = abap_true.
+              ENDIF.
+
+              IF lv_exists = abap_true.
+                TRY.
+                    ls_comp-type = CAST cl_abap_elemdescr(
+                      cl_abap_typedescr=>describe_by_name( |{ lv_tabname }-{ lv_fieldname }| ) ).
+                  CATCH cx_root.
+                    ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
+                ENDTRY.
+              ELSE.
+                ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
+              ENDIF.
             ELSE.
               ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
             ENDIF.
@@ -335,6 +350,11 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
           EXPORTING textid        = zcx_dsl_parse=>gc_malformed_json
                     mv_error_code = 'DSL_EXEC_001'
                     mv_attr1      = lx_err->get_text( ).
+      CATCH cx_root INTO DATA(lx_any).
+        RAISE EXCEPTION TYPE zcx_dsl_parse
+          EXPORTING textid        = zcx_dsl_parse=>gc_malformed_json
+                    mv_error_code = 'DSL_EXEC_001'
+                    mv_attr1      = lx_any->get_text( ).
     ENDTRY.
   endmethod.
 
