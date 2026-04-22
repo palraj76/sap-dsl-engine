@@ -788,6 +788,12 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
       ls_node-param = json_extract_string( lv_param ).
     ENDIF.
 
+    " Subquery — raw JSON captured for recursive build
+    DATA(lv_sub) = json_extract_member( iv_json = iv_json iv_key = 'subquery' ).
+    IF lv_sub IS NOT INITIAL AND json_is_null( lv_sub ) = abap_false.
+      ls_node-subquery_json = lv_sub.
+    ENDIF.
+
     APPEND ls_node TO ct_nodes.
   endmethod.
 

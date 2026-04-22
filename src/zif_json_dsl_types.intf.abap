@@ -17,14 +17,15 @@ interface ZIF_JSON_DSL_TYPES
       node_id     TYPE i,
       parent_id   TYPE i,
       node_type   TYPE c LENGTH 1,
-      logic       TYPE string,
-      left_field  TYPE string,
-      right_field TYPE string,
-      field       TYPE string,
-      op          TYPE string,
-      value       TYPE string,
-      param       TYPE string,
-      values      TYPE string_table,
+      logic         TYPE string,
+      left_field    TYPE string,
+      right_field   TYPE string,
+      field         TYPE string,
+      op            TYPE string,
+      value         TYPE string,
+      param         TYPE string,
+      values        TYPE string_table,
+      subquery_json TYPE string,
     END OF ty_cond_node .
   types ty_cond_nodes TYPE STANDARD TABLE OF ty_cond_node WITH DEFAULT KEY .
 

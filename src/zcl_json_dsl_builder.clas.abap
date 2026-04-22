@@ -116,6 +116,12 @@ class ZCL_JSON_DSL_BUILDER definition
         !IS_METRIC type ZIF_JSON_DSL_TYPES=>TY_METRIC
       returning
         value(RV_EXPR) type STRING .
+
+    methods BUILD_SUBQUERY_SQL
+      importing
+        !IV_JSON type STRING
+      returning
+        value(RV_SQL) type STRING .
 ENDCLASS.
 
 
@@ -315,17 +321,23 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
 
     CASE is_node-op.
       WHEN 'IN' OR 'NOT IN'.
-        " Build value list
-        DATA lt_vals TYPE string_table.
-        IF is_node-values IS NOT INITIAL.
-          LOOP AT is_node-values INTO DATA(lv_v).
-            APPEND |'{ escape_value( lv_v ) }'| TO lt_vals.
-          ENDLOOP.
-        ELSEIF is_node-value IS NOT INITIAL.
-          APPEND |'{ escape_value( is_node-value ) }'| TO lt_vals.
+        " Subquery form: IN ( SELECT ... FROM ... )
+        IF is_node-subquery_json IS NOT INITIAL.
+          DATA(lv_subq) = build_subquery_sql( is_node-subquery_json ).
+          rv_sql = |{ lv_field } { is_node-op } ( { lv_subq } )|.
+        ELSE.
+          " Literal value list: IN ( 'A', 'B' )
+          DATA lt_vals TYPE string_table.
+          IF is_node-values IS NOT INITIAL.
+            LOOP AT is_node-values INTO DATA(lv_v).
+              APPEND |'{ escape_value( lv_v ) }'| TO lt_vals.
+            ENDLOOP.
+          ELSEIF is_node-value IS NOT INITIAL.
+            APPEND |'{ escape_value( is_node-value ) }'| TO lt_vals.
+          ENDIF.
+          DATA(lv_list) = concat_lines_of( table = lt_vals sep = `, ` ).
+          rv_sql = |{ lv_field } { is_node-op } ( { lv_list } )|.
         ENDIF.
-        DATA(lv_list) = concat_lines_of( table = lt_vals sep = `, ` ).
-        rv_sql = |{ lv_field } { is_node-op } ( { lv_list } )|.
 
       WHEN 'BETWEEN'.
         " Expects two values in values table
@@ -441,6 +453,46 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       WITH KEY key = iv_param.
     IF sy-subrc = 0.
       rv_value = ls_param-value.
+    ENDIF.
+  endmethod.
+
+
+  method BUILD_SUBQUERY_SQL.
+    " Parse the subquery JSON (auto-inject version if missing) and build its SQL
+    DATA lv_json TYPE string.
+    lv_json = iv_json.
+
+    " Auto-inject version so parse() accepts it
+    DATA(lo_parser_check) = NEW zcl_json_dsl_parser( ).
+    DATA(lv_has_version) = lo_parser_check->json_extract_member(
+      iv_json = lv_json iv_key = 'version' ).
+    IF lv_has_version IS INITIAL.
+      REPLACE FIRST OCCURRENCE OF '{' IN lv_json
+        WITH '{"version":"1.3",'.
+    ENDIF.
+
+    " Parse subquery as a full DSL query
+    TRY.
+        DATA(lo_parser) = NEW zcl_json_dsl_parser( ).
+        DATA(ls_sub) = lo_parser->parse( lv_json ).
+      CATCH zcx_dsl_parse.
+        rv_sql = `/* invalid subquery */`.
+        RETURN.
+    ENDTRY.
+
+    " Build the subquery SQL using this same builder (recursive)
+    DATA(ls_sql) = build( ls_sub ).
+
+    " Assemble: SELECT <fields> FROM <source> [JOIN ...] [WHERE ...] [GROUP BY ...]
+    rv_sql = |SELECT { ls_sql-select_clause } FROM { ls_sql-from_clause }|.
+    IF ls_sql-join_clause IS NOT INITIAL.
+      rv_sql = rv_sql && | { ls_sql-join_clause }|.
+    ENDIF.
+    IF ls_sql-where_clause IS NOT INITIAL.
+      rv_sql = rv_sql && | WHERE { ls_sql-where_clause }|.
+    ENDIF.
+    IF ls_sql-group_by_clause IS NOT INITIAL.
+      rv_sql = rv_sql && | GROUP BY { ls_sql-group_by_clause }|.
     ENDIF.
   endmethod.
 ENDCLASS.
