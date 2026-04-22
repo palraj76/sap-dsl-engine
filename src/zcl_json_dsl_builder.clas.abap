@@ -333,8 +333,15 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Filter leaf
-    DATA(lv_field) = to_sql_field( is_node-field ).
+    " Filter leaf — be lenient: if 'field' is missing but 'left' is set,
+    " treat 'left' as the field (common when mixing join + value conditions)
+    DATA lv_src_field TYPE string.
+    IF is_node-field IS NOT INITIAL.
+      lv_src_field = is_node-field.
+    ELSEIF is_node-left_field IS NOT INITIAL.
+      lv_src_field = is_node-left_field.
+    ENDIF.
+    DATA(lv_field) = to_sql_field( lv_src_field ).
 
     CASE is_node-op.
       WHEN 'IS NULL'.
