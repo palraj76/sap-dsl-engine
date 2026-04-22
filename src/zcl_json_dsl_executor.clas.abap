@@ -114,6 +114,7 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
           code     = 'DSL_EXEC_001'
           severity = 'ERROR'
           message  = lx_sql->get_text( )
+          hint     = |Generated SQL: { build_dynamic_select( is_sql ) }|
         ) TO rs_response-errors.
         RETURN.
 
@@ -122,6 +123,7 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
           code     = 'DSL_EXEC_001'
           severity = 'ERROR'
           message  = lx_any->get_text( )
+          hint     = |Generated SQL: { build_dynamic_select( is_sql ) }|
         ) TO rs_response-errors.
         RETURN.
     ENDTRY.
