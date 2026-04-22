@@ -7,15 +7,16 @@ class ZCL_JSON_DSL_BUILDER definition
 
     types:
       BEGIN OF ty_sql_result,
-        select_clause  TYPE string,
-        from_clause    TYPE string,
-        join_clause    TYPE string,
-        where_clause   TYPE string,
+        select_clause   TYPE string,
+        from_clause     TYPE string,
+        join_clause     TYPE string,
+        where_clause    TYPE string,
         group_by_clause TYPE string,
-        having_clause  TYPE string,
+        having_clause   TYPE string,
         order_by_clause TYPE string,
-        row_limit      TYPE i,
-        strategy       TYPE string,
+        row_limit       TYPE i,
+        strategy        TYPE string,
+        needs_new_sql   TYPE abap_bool,
       END OF ty_sql_result .
 
     methods BUILD
@@ -132,6 +133,19 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
   method BUILD.
     rs_sql-strategy = determine_strategy( is_query ).
 
+    " Detect if new SQL syntax is required:
+    " - Presence of JOINs → new syntax (existing behavior)
+    " - Presence of subquery in filters → new syntax (ABAP dynamic SQL requirement)
+    rs_sql-needs_new_sql = abap_false.
+    IF is_query-joins IS NOT INITIAL.
+      rs_sql-needs_new_sql = abap_true.
+    ENDIF.
+    LOOP AT is_query-filter_nodes INTO DATA(ls_chk_node)
+      WHERE subquery_json IS NOT INITIAL.
+      rs_sql-needs_new_sql = abap_true.
+      EXIT.
+    ENDLOOP.
+
     rs_sql-select_clause = build_select_clause( is_query ).
     rs_sql-from_clause   = build_from_clause( is_query-sources ).
     rs_sql-join_clause   = build_join_clause( is_query-joins ).
@@ -177,8 +191,19 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Separator: commas for JOINs (new syntax), spaces for single table (old syntax)
+    " Separator: commas for JOINs or subqueries (new syntax), spaces otherwise (old syntax)
+    DATA(lv_needs_commas) = abap_false.
     IF is_query-joins IS NOT INITIAL.
+      lv_needs_commas = abap_true.
+    ELSE.
+      LOOP AT is_query-filter_nodes INTO DATA(ls_chk)
+        WHERE subquery_json IS NOT INITIAL.
+        lv_needs_commas = abap_true.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
+
+    IF lv_needs_commas = abap_true.
       rv_clause = concat_lines_of( table = lt_parts sep = `, ` ).
     ELSE.
       rv_clause = concat_lines_of( table = lt_parts sep = ` ` ).

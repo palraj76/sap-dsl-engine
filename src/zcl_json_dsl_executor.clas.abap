@@ -274,7 +274,8 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         " ── Dynamic Open SQL execution ──
         " JOINs require new syntax (commas in fields, @ for host vars)
         " Single table uses old syntax (INTO before FROM, no @)
-        DATA(lv_has_joins) = boolc( is_sql-join_clause IS NOT INITIAL ).
+        " Use new Open SQL syntax when JOINs or subqueries are present
+        DATA(lv_has_joins) = boolc( is_sql-join_clause IS NOT INITIAL OR is_sql-needs_new_sql = abap_true ).
 
         IF lv_has_joins = abap_true.
           " ── New syntax for JOINs ──
