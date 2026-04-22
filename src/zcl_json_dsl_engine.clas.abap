@@ -112,10 +112,24 @@ CLASS ZCL_JSON_DSL_ENGINE IMPLEMENTATION.
         ENDLOOP.
 
       CATCH zcx_dsl_parse INTO DATA(lx_exec).
+        " Build the SQL string for debugging
+        DATA lv_sql TYPE string.
+        lv_sql = |SELECT { ls_sql-select_clause } FROM { ls_sql-from_clause }|.
+        IF ls_sql-join_clause IS NOT INITIAL.
+          lv_sql = lv_sql && | { ls_sql-join_clause }|.
+        ENDIF.
+        IF ls_sql-where_clause IS NOT INITIAL.
+          lv_sql = lv_sql && | WHERE { ls_sql-where_clause }|.
+        ENDIF.
+        IF ls_sql-group_by_clause IS NOT INITIAL.
+          lv_sql = lv_sql && | GROUP BY { ls_sql-group_by_clause }|.
+        ENDIF.
+
         APPEND VALUE zst_dsl_error(
           code     = lx_exec->mv_error_code
           severity = 'ERROR'
           message  = lx_exec->get_text( )
+          hint     = lv_sql
         ) TO rs_response-errors.
     ENDTRY.
 
