@@ -134,10 +134,14 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
     rs_sql-strategy = determine_strategy( is_query ).
 
     " Detect if new SQL syntax is required:
-    " - Presence of JOINs → new syntax (existing behavior)
-    " - Presence of subquery in filters → new syntax (ABAP dynamic SQL requirement)
+    " - Presence of JOINs → new syntax
+    " - Presence of subquery in filters → new syntax
+    " - Mix of regular select fields + metrics → new syntax (needs commas)
     rs_sql-needs_new_sql = abap_false.
     IF is_query-joins IS NOT INITIAL.
+      rs_sql-needs_new_sql = abap_true.
+    ENDIF.
+    IF is_query-select_fields IS NOT INITIAL AND is_query-metrics IS NOT INITIAL.
       rs_sql-needs_new_sql = abap_true.
     ENDIF.
     LOOP AT is_query-filter_nodes INTO DATA(ls_chk_node)
@@ -191,9 +195,11 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
-    " Separator: commas for JOINs or subqueries (new syntax), spaces otherwise (old syntax)
+    " Separator: commas when JOINs, subqueries, OR mixed fields+metrics (new syntax)
     DATA(lv_needs_commas) = abap_false.
     IF is_query-joins IS NOT INITIAL.
+      lv_needs_commas = abap_true.
+    ELSEIF is_query-select_fields IS NOT INITIAL AND is_query-metrics IS NOT INITIAL.
       lv_needs_commas = abap_true.
     ELSE.
       LOOP AT is_query-filter_nodes INTO DATA(ls_chk)
