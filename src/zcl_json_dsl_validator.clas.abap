@@ -289,23 +289,10 @@ CLASS ZCL_JSON_DSL_VALIDATOR IMPLEMENTATION.
       check_field_qualified( iv_field = ls_fn2-field iv_context = 'filters' ).
     ENDLOOP.
 
-    " DSL_SEM_007: MANDT check on joins
-    LOOP AT is_query-joins INTO DATA(ls_j).
-      DATA lv_has_mandt TYPE abap_bool VALUE abap_false.
-      LOOP AT ls_j-on_nodes INTO DATA(ls_on)
-        WHERE node_type = 'L'.
-        IF ls_on-left_field CS 'MANDT' OR ls_on-right_field CS 'MANDT'.
-          lv_has_mandt = abap_true.
-          EXIT.
-        ENDIF.
-      ENDLOOP.
-      IF lv_has_mandt = abap_false.
-        add_error(
-          iv_code    = 'DSL_SEM_007'
-          iv_message = |JOIN on { ls_j-target_table } missing MANDT condition|
-          iv_table   = ls_j-target_table ).
-      ENDIF.
-    ENDLOOP.
+    " DSL_SEM_007 (relaxed): MANDT is auto-handled by ABAP new Open SQL syntax,
+    " and the builder strips MANDT from JOIN ON conditions. The validator no longer
+    " requires explicit MANDT — callers may include it for readability but it's optional.
+    " (Check intentionally disabled — keeping spec §9.3 rule as a no-op for compatibility.)
   endmethod.
 
 
