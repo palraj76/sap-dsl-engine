@@ -46,6 +46,10 @@ class ZCL_JSON_DSL_VALIDATOR definition
       importing
         !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY .
 
+    methods VALIDATE_UNION
+      importing
+        !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY .
+
     methods CHECK_FIELD_QUALIFIED
       importing
         !IV_FIELD type STRING
@@ -89,6 +93,11 @@ CLASS ZCL_JSON_DSL_VALIDATOR IMPLEMENTATION.
     " Phase B — Guardrails
     validate_guardrails( is_query ).
 
+    " Phase B — Union (only runs when union is set; otherwise no-op)
+    IF is_query-union-is_set = abap_true.
+      validate_union( is_query ).
+    ENDIF.
+
     " Phase C — Injection defense (raises ZCX_DSL_SECURITY)
     validate_injection( is_query ).
 
@@ -126,13 +135,18 @@ CLASS ZCL_JSON_DSL_VALIDATOR IMPLEMENTATION.
 
     " STRICT mode — full whitelist enforcement
 
-    " Collect all table references
+    " Collect all table references (top-level + union branches)
     DATA lt_tables TYPE string_table.
     LOOP AT is_query-sources INTO DATA(ls_src).
       APPEND ls_src-table TO lt_tables.
     ENDLOOP.
     LOOP AT is_query-joins INTO DATA(ls_join).
       APPEND ls_join-target_table TO lt_tables.
+    ENDLOOP.
+    LOOP AT is_query-union-branches INTO DATA(ls_br_wl).
+      LOOP AT ls_br_wl-sources INTO DATA(ls_bs_wl).
+        APPEND ls_bs_wl-table TO lt_tables.
+      ENDLOOP.
     ENDLOOP.
 
     " Check each table is whitelisted
@@ -430,6 +444,43 @@ CLASS ZCL_JSON_DSL_VALIDATOR IMPLEMENTATION.
     SELECT SINGLE config_value INTO rv_value
       FROM zjson_dsl_config
       WHERE config_key = iv_key.
+  endmethod.
+
+
+  method VALIDATE_UNION.
+    " DSL_SEM_012: union must have at least 2 branches
+    DATA(lv_n) = lines( is_query-union-branches ).
+    IF lv_n < 2.
+      add_error(
+        iv_code    = 'DSL_SEM_012'
+        iv_message = |UNION must have at least 2 branches (got { lv_n })| ).
+      RETURN.
+    ENDIF.
+
+    " DSL_SEM_013: all branches must have same select column count
+    DATA lv_first_count TYPE i VALUE -1.
+    LOOP AT is_query-union-branches INTO DATA(ls_br).
+      DATA(lv_count) = lines( ls_br-select_fields ).
+      IF lv_first_count = -1.
+        lv_first_count = lv_count.
+      ELSEIF lv_count <> lv_first_count.
+        add_error(
+          iv_code    = 'DSL_SEM_013'
+          iv_message = |Branch { sy-tabix } has { lv_count } columns; expected { lv_first_count }| ).
+      ENDIF.
+
+      " Each branch must have at least one source and at least one select field
+      IF ls_br-sources IS INITIAL.
+        add_error(
+          iv_code    = 'DSL_SEM_012'
+          iv_message = |Branch { sy-tabix } has no sources| ).
+      ENDIF.
+      IF ls_br-select_fields IS INITIAL.
+        add_error(
+          iv_code    = 'DSL_SEM_012'
+          iv_message = |Branch { sy-tabix } has no select fields| ).
+      ENDIF.
+    ENDLOOP.
   endmethod.
 
 

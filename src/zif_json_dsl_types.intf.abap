@@ -101,6 +101,24 @@ interface ZIF_JSON_DSL_TYPES
       include_summary    TYPE abap_bool,
     END OF ty_output .
 
+  " ─── Union branch (v1: single source set + select + optional filters) ───
+  types:
+    BEGIN OF ty_union_branch,
+      sources       TYPE ty_sources,
+      select_fields TYPE ty_select_fields,
+      filter_nodes  TYPE ty_cond_nodes,
+      params        TYPE ty_params,
+    END OF ty_union_branch .
+  types ty_union_branches TYPE STANDARD TABLE OF ty_union_branch WITH DEFAULT KEY .
+
+  " ─── Union ───
+  types:
+    BEGIN OF ty_union,
+      is_set   TYPE abap_bool,
+      distinct TYPE abap_bool,
+      branches TYPE ty_union_branches,
+    END OF ty_union .
+
   " ─── Full parsed query ───
   types:
     BEGIN OF ty_query,
@@ -118,6 +136,7 @@ interface ZIF_JSON_DSL_TYPES
       limit         TYPE ty_limit,
       params        TYPE ty_params,
       output        TYPE ty_output,
+      union         TYPE ty_union,
       warnings      TYPE ztt_dsl_error,
       " Metadata — passed through for tracing/logging
       metric_name   TYPE string,

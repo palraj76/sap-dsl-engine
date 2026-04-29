@@ -6,17 +6,30 @@ class ZCL_JSON_DSL_BUILDER definition
   public section.
 
     types:
+      BEGIN OF ty_branch_sql,
+        select_clause TYPE string,
+        from_clause   TYPE string,
+        where_clause  TYPE string,
+      END OF ty_branch_sql .
+    types ty_branch_sqls TYPE STANDARD TABLE OF ty_branch_sql WITH DEFAULT KEY .
+
+    types:
       BEGIN OF ty_sql_result,
-        select_clause   TYPE string,
-        from_clause     TYPE string,
-        join_clause     TYPE string,
-        where_clause    TYPE string,
-        group_by_clause TYPE string,
-        having_clause   TYPE string,
-        order_by_clause TYPE string,
-        row_limit       TYPE i,
-        strategy        TYPE string,
-        needs_new_sql   TYPE abap_bool,
+        select_clause    TYPE string,
+        from_clause      TYPE string,
+        join_clause      TYPE string,
+        where_clause     TYPE string,
+        group_by_clause  TYPE string,
+        having_clause    TYPE string,
+        order_by_clause  TYPE string,
+        row_limit        TYPE i,
+        strategy         TYPE string,
+        needs_new_sql    TYPE abap_bool,
+        " Union path
+        is_union         TYPE abap_bool,
+        union_distinct   TYPE abap_bool,
+        union_branches   TYPE ty_branch_sqls,
+        union_count_only TYPE abap_bool,
       END OF ty_sql_result .
 
     methods BUILD
@@ -123,6 +136,12 @@ class ZCL_JSON_DSL_BUILDER definition
         !IV_JSON type STRING
       returning
         value(RV_SQL) type STRING .
+
+    methods BUILD_UNION
+      importing
+        !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY
+      changing
+        !CS_SQL type TY_SQL_RESULT .
 ENDCLASS.
 
 
@@ -131,6 +150,14 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
 
 
   method BUILD.
+    " Union path is exclusive — when set, top-level select/from/where are not
+    " produced (they are left initial). Existing non-union queries keep their
+    " current code path untouched.
+    IF is_query-union-is_set = abap_true.
+      build_union( EXPORTING is_query = is_query CHANGING cs_sql = rs_sql ).
+      RETURN.
+    ENDIF.
+
     rs_sql-strategy = determine_strategy( is_query ).
 
     " Detect if new SQL syntax is required:
@@ -491,6 +518,68 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       WITH KEY key = iv_param.
     IF sy-subrc = 0.
       rv_value = ls_param-value.
+    ENDIF.
+  endmethod.
+
+
+  method BUILD_UNION.
+    " Build per-branch SQL fragments. Each branch reuses the existing builder
+    " helpers, so the per-branch SQL is identical to what a standalone query
+    " against the same tables/fields/filters would produce.
+    cs_sql-is_union       = abap_true.
+    cs_sql-union_distinct = is_query-union-distinct.
+
+    LOOP AT is_query-union-branches INTO DATA(ls_br).
+      DATA ls_branch_sql TYPE ty_branch_sql.
+      CLEAR ls_branch_sql.
+
+      " Build a synthetic ty_query for this branch, so the existing helpers work.
+      DATA ls_pseudo TYPE zif_json_dsl_types=>ty_query.
+      CLEAR ls_pseudo.
+      ls_pseudo-sources       = ls_br-sources.
+      ls_pseudo-select_fields = ls_br-select_fields.
+      ls_pseudo-filter_nodes  = ls_br-filter_nodes.
+      ls_pseudo-params        = ls_br-params.
+
+      " Branch SELECT — always comma-separated (we will execute as new-syntax UNION)
+      DATA lt_parts TYPE string_table.
+      LOOP AT ls_br-select_fields INTO DATA(ls_fld).
+        IF ls_fld-field IS NOT INITIAL.
+          APPEND to_sql_field( ls_fld-field ) TO lt_parts.
+        ENDIF.
+      ENDLOOP.
+      ls_branch_sql-select_clause = concat_lines_of( table = lt_parts sep = `, ` ).
+
+      ls_branch_sql-from_clause   = build_from_clause( ls_br-sources ).
+      ls_branch_sql-where_clause  = build_where_clause(
+        it_nodes  = ls_br-filter_nodes
+        it_params = ls_br-params ).
+
+      APPEND ls_branch_sql TO cs_sql-union_branches.
+    ENDLOOP.
+
+    " Detect "single COUNT(*) at top level" — that's the case the CTE path
+    " optimizes for. Anything else falls through to in-memory at execution time.
+    cs_sql-union_count_only = abap_false.
+    IF lines( is_query-metrics ) = 1
+       AND is_query-select_fields IS INITIAL
+       AND is_query-group_by IS INITIAL.
+      READ TABLE is_query-metrics INTO DATA(ls_m) INDEX 1.
+      IF sy-subrc = 0 AND ls_m-type = 'count' AND ls_m-field = '*'.
+        cs_sql-union_count_only = abap_true.
+      ENDIF.
+    ENDIF.
+
+    " Strategy is decided by the executor (CTE vs INMEMORY) based on capability
+    " probe. Set a placeholder for audit log.
+    cs_sql-strategy      = 'UNION'.
+    cs_sql-needs_new_sql = abap_true.
+
+    " Pagination row_limit still honoured for in-memory row-list mode.
+    IF is_query-limit-page_size > 0.
+      cs_sql-row_limit = is_query-limit-offset + is_query-limit-page_size.
+    ELSEIF is_query-limit-rows > 0.
+      cs_sql-row_limit = is_query-limit-rows.
     ENDIF.
   endmethod.
 

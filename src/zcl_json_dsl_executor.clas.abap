@@ -27,6 +27,33 @@ class ZCL_JSON_DSL_EXECUTOR definition
       raising
         ZCX_DSL_PARSE .
 
+    methods EXECUTE_UNION
+      importing
+        !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY
+        !IS_SQL type ZCL_JSON_DSL_BUILDER=>TY_SQL_RESULT
+      changing
+        !CS_RESPONSE type ZIF_JSON_DSL_TYPES=>TY_RESPONSE
+      raising
+        ZCX_DSL_PARSE .
+
+    methods EXECUTE_UNION_CTE_COUNT
+      importing
+        !IS_SQL type ZCL_JSON_DSL_BUILDER=>TY_SQL_RESULT
+      returning
+        value(RV_COUNT) type I
+      raising
+        ZCX_DSL_PARSE .
+
+    methods EXECUTE_UNION_INMEMORY
+      importing
+        !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY
+        !IS_SQL type ZCL_JSON_DSL_BUILDER=>TY_SQL_RESULT
+      exporting
+        !ET_ROWS type ZIF_JSON_DSL_TYPES=>TY_RESULT_ROWS
+        !EV_COUNT type I
+      raising
+        ZCX_DSL_PARSE .
+
     methods BUILD_DYNAMIC_SELECT
       importing
         !IS_SQL type ZCL_JSON_DSL_BUILDER=>TY_SQL_RESULT
@@ -97,6 +124,28 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
     GET RUN TIME FIELD lv_start.
 
     TRY.
+        IF is_sql-is_union = abap_true.
+          " Union path: chooses CTE or in-memory at runtime; populates
+          " rs_response-aggregates / rs_response-rows / meta-strategy_used.
+          execute_union(
+            EXPORTING is_query = is_query is_sql = is_sql
+            CHANGING  cs_response = rs_response ).
+          " Capture timing / metadata then return early — union path manages
+          " its own rows / aggregates without going through apply_pagination.
+          GET RUN TIME FIELD lv_end.
+          rs_response-meta-execution_time_ms = ( lv_end - lv_start ) / 1000.
+          IF rs_response-meta-row_count = 0.
+            rs_response-meta-row_count = lines( rs_response-rows ).
+          ENDIF.
+          write_audit_log(
+            is_query    = is_query
+            is_sql      = is_sql
+            is_response = rs_response
+            iv_caller   = iv_caller
+            iv_exec_ms  = rs_response-meta-execution_time_ms ).
+          RETURN.
+        ENDIF.
+
         CASE is_sql-strategy.
           WHEN 'OPEN_SQL'.
             execute_open_sql(
@@ -364,6 +413,27 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
   method BUILD_DYNAMIC_SELECT.
     " Assemble full SQL for logging/audit (not for execution — that uses dynamic clauses)
+    IF is_sql-is_union = abap_true.
+      DATA lt_branch_sqls TYPE string_table.
+      LOOP AT is_sql-union_branches INTO DATA(ls_br).
+        DATA(lv_part) = |SELECT { ls_br-select_clause } FROM { ls_br-from_clause }|.
+        IF ls_br-where_clause IS NOT INITIAL.
+          lv_part = lv_part && | WHERE { ls_br-where_clause }|.
+        ENDIF.
+        APPEND lv_part TO lt_branch_sqls.
+      ENDLOOP.
+      DATA(lv_sep) = COND #( WHEN is_sql-union_distinct = abap_true
+                             THEN ` UNION DISTINCT `
+                             ELSE ` UNION ALL ` ).
+      DATA(lv_inner) = concat_lines_of( table = lt_branch_sqls sep = lv_sep ).
+      IF is_sql-union_count_only = abap_true.
+        rv_sql = |WITH +combined AS ( { lv_inner } ) SELECT COUNT(*) FROM +combined|.
+      ELSE.
+        rv_sql = lv_inner.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
     rv_sql = |SELECT { is_sql-select_clause }|.
     rv_sql = rv_sql && | FROM { is_sql-from_clause }|.
     IF is_sql-join_clause IS NOT INITIAL.
@@ -657,6 +727,255 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
     IF lt_alog IS NOT INITIAL.
       INSERT zjson_dsl_alog FROM TABLE lt_alog.
     ENDIF.
+  endmethod.
+
+
+  method EXECUTE_UNION.
+    " Decide execution path:
+    "   - CTE path: when query is COUNT(*) only, exactly 2 branches, and
+    "     ZCL_JSON_DSL_CAPABILITY says CTE+UNION is supported.
+    "   - In-memory path: every other case (rows, >2 branches, no CTE support).
+    DATA(lv_branch_count) = lines( is_sql-union_branches ).
+    DATA(lv_use_cte) = abap_false.
+
+    IF is_sql-union_count_only = abap_true
+       AND lv_branch_count = 2
+       AND zcl_json_dsl_capability=>is_cte_union_supported( ) = abap_true.
+      lv_use_cte = abap_true.
+    ENDIF.
+
+    IF lv_use_cte = abap_true.
+      DATA(lv_count) = execute_union_cte_count( is_sql ).
+      cs_response-meta-strategy_used = 'CTE_UNION'.
+      cs_response-meta-row_count     = 1.
+
+      " Surface the count as a single aggregate (matching alias from query metrics).
+      DATA lv_alias TYPE string.
+      READ TABLE is_query-metrics INTO DATA(ls_m) INDEX 1.
+      IF sy-subrc = 0 AND ls_m-alias IS NOT INITIAL.
+        lv_alias = ls_m-alias.
+      ELSE.
+        lv_alias = 'total'.
+      ENDIF.
+      APPEND VALUE zif_json_dsl_types=>ty_aggregate(
+        alias = lv_alias
+        type  = 'count'
+        value = |{ lv_count }|
+      ) TO cs_response-aggregates.
+      RETURN.
+    ENDIF.
+
+    " ── In-memory path ──
+    DATA lt_rows  TYPE zif_json_dsl_types=>ty_result_rows.
+    DATA lv_inmem_count TYPE i.
+    execute_union_inmemory(
+      EXPORTING is_query = is_query is_sql = is_sql
+      IMPORTING et_rows  = lt_rows  ev_count = lv_inmem_count ).
+
+    cs_response-meta-strategy_used = 'INMEMORY_UNION'.
+
+    IF is_sql-union_count_only = abap_true.
+      " Caller asked for COUNT(*) — surface as aggregate, not rows.
+      DATA lv_alias_im TYPE string.
+      READ TABLE is_query-metrics INTO DATA(ls_m_im) INDEX 1.
+      IF sy-subrc = 0 AND ls_m_im-alias IS NOT INITIAL.
+        lv_alias_im = ls_m_im-alias.
+      ELSE.
+        lv_alias_im = 'total'.
+      ENDIF.
+      APPEND VALUE zif_json_dsl_types=>ty_aggregate(
+        alias = lv_alias_im
+        type  = 'count'
+        value = |{ lv_inmem_count }|
+      ) TO cs_response-aggregates.
+      cs_response-meta-row_count = 1.
+    ELSE.
+      cs_response-rows           = lt_rows.
+      cs_response-meta-row_count = lines( lt_rows ).
+    ENDIF.
+  endmethod.
+
+
+  method EXECUTE_UNION_CTE_COUNT.
+    " Hardcoded 2-branch CTE with dynamic field/from/where slots.
+    " The kernel parses the WITH/UNION grammar at compile time; everything
+    " inside the parenthesised SELECT can be dynamic.
+    DATA lv_count TYPE i.
+
+    READ TABLE is_sql-union_branches INTO DATA(ls_a) INDEX 1.
+    READ TABLE is_sql-union_branches INTO DATA(ls_b) INDEX 2.
+
+    DATA(lv_fa) = ls_a-select_clause.
+    DATA(lv_ta) = ls_a-from_clause.
+    DATA(lv_wa) = ls_a-where_clause.
+    DATA(lv_fb) = ls_b-select_clause.
+    DATA(lv_tb) = ls_b-from_clause.
+    DATA(lv_wb) = ls_b-where_clause.
+
+    TRY.
+        IF lv_wa IS NOT INITIAL AND lv_wb IS NOT INITIAL.
+          WITH +combined AS (
+                 SELECT (lv_fa) FROM (lv_ta) WHERE (lv_wa)
+                 UNION DISTINCT
+                 SELECT (lv_fb) FROM (lv_tb) WHERE (lv_wb) )
+            SELECT COUNT(*) FROM +combined INTO @lv_count.
+        ELSEIF lv_wa IS NOT INITIAL.
+          WITH +combined AS (
+                 SELECT (lv_fa) FROM (lv_ta) WHERE (lv_wa)
+                 UNION DISTINCT
+                 SELECT (lv_fb) FROM (lv_tb) )
+            SELECT COUNT(*) FROM +combined INTO @lv_count.
+        ELSEIF lv_wb IS NOT INITIAL.
+          WITH +combined AS (
+                 SELECT (lv_fa) FROM (lv_ta)
+                 UNION DISTINCT
+                 SELECT (lv_fb) FROM (lv_tb) WHERE (lv_wb) )
+            SELECT COUNT(*) FROM +combined INTO @lv_count.
+        ELSE.
+          WITH +combined AS (
+                 SELECT (lv_fa) FROM (lv_ta)
+                 UNION DISTINCT
+                 SELECT (lv_fb) FROM (lv_tb) )
+            SELECT COUNT(*) FROM +combined INTO @lv_count.
+        ENDIF.
+
+        rv_count = lv_count.
+      CATCH cx_sy_dynamic_osql_error INTO DATA(lx_err).
+        RAISE EXCEPTION TYPE zcx_dsl_parse
+          EXPORTING textid        = zcx_dsl_parse=>gc_malformed_json
+                    mv_error_code = 'DSL_EXEC_001'
+                    mv_attr1      = lx_err->get_text( ).
+      CATCH cx_root INTO DATA(lx_any).
+        RAISE EXCEPTION TYPE zcx_dsl_parse
+          EXPORTING textid        = zcx_dsl_parse=>gc_malformed_json
+                    mv_error_code = 'DSL_EXEC_001'
+                    mv_attr1      = lx_any->get_text( ).
+    ENDTRY.
+  endmethod.
+
+
+  method EXECUTE_UNION_INMEMORY.
+    " Execute each branch as a standalone dynamic SELECT, accumulate rows,
+    " then dedup if the union is DISTINCT. Works for any branch count.
+    DATA lt_all_rows TYPE zif_json_dsl_types=>ty_result_rows.
+
+    LOOP AT is_query-union-branches INTO DATA(ls_br).
+      DATA lv_idx TYPE i.
+      lv_idx = sy-tabix.
+
+      READ TABLE is_sql-union_branches INTO DATA(ls_bsql) INDEX lv_idx.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+
+      " Build a per-branch dynamic structure (RTTI) using DDIC types.
+      DATA lt_components TYPE cl_abap_structdescr=>component_table.
+      DATA ls_comp       LIKE LINE OF lt_components.
+      DATA lv_tabname    TYPE tabname.
+      DATA lv_fieldname  TYPE fieldname.
+      CLEAR lt_components.
+
+      LOOP AT ls_br-select_fields INTO DATA(ls_fld).
+        CLEAR ls_comp.
+        IF ls_fld-alias IS NOT INITIAL.
+          ls_comp-name = to_upper( ls_fld-alias ).
+        ELSE.
+          ls_comp-name = to_upper( ls_fld-field ).
+          REPLACE ALL OCCURRENCES OF '.' IN ls_comp-name WITH '_'.
+        ENDIF.
+
+        CLEAR lv_tabname.
+        IF ls_fld-field CS '.'.
+          SPLIT ls_fld-field AT '.' INTO DATA(lv_alias) DATA(lv_fname).
+          READ TABLE ls_br-sources INTO DATA(ls_src) WITH KEY alias = lv_alias.
+          IF sy-subrc = 0. lv_tabname = ls_src-table. ENDIF.
+        ENDIF.
+
+        IF lv_tabname IS NOT INITIAL.
+          lv_fieldname = lv_fname.
+          DATA lv_exists TYPE abap_bool.
+          lv_exists = abap_false.
+          SELECT COUNT(*) FROM dd03l
+            WHERE tabname = lv_tabname AND fieldname = lv_fieldname AND as4local = 'A'.
+          IF sy-dbcnt > 0. lv_exists = abap_true. ENDIF.
+
+          IF lv_exists = abap_true.
+            TRY.
+                ls_comp-type = CAST cl_abap_elemdescr(
+                  cl_abap_typedescr=>describe_by_name( |{ lv_tabname }-{ lv_fieldname }| ) ).
+              CATCH cx_root.
+                ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
+            ENDTRY.
+          ELSE.
+            ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
+          ENDIF.
+        ELSE.
+          ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
+        ENDIF.
+
+        APPEND ls_comp TO lt_components.
+      ENDLOOP.
+
+      DATA(lo_struct) = cl_abap_structdescr=>create( lt_components ).
+      DATA(lo_table)  = cl_abap_tabledescr=>create( lo_struct ).
+      DATA lr_table TYPE REF TO data.
+      CREATE DATA lr_table TYPE HANDLE lo_table.
+      FIELD-SYMBOLS: <lt_branch> TYPE STANDARD TABLE.
+      ASSIGN lr_table->* TO <lt_branch>.
+
+      DATA(lv_fields) = ls_bsql-select_clause.
+      DATA(lv_from)   = ls_bsql-from_clause.
+      DATA(lv_where)  = ls_bsql-where_clause.
+
+      TRY.
+          IF lv_where IS NOT INITIAL.
+            SELECT (lv_fields) FROM (lv_from) WHERE (lv_where)
+              INTO TABLE @<lt_branch>.
+          ELSE.
+            SELECT (lv_fields) FROM (lv_from)
+              INTO TABLE @<lt_branch>.
+          ENDIF.
+        CATCH cx_sy_dynamic_osql_error INTO DATA(lx_err).
+          RAISE EXCEPTION TYPE zcx_dsl_parse
+            EXPORTING textid        = zcx_dsl_parse=>gc_malformed_json
+                      mv_error_code = 'DSL_EXEC_001'
+                      mv_attr1      = lx_err->get_text( ).
+        CATCH cx_root INTO DATA(lx_any).
+          RAISE EXCEPTION TYPE zcx_dsl_parse
+            EXPORTING textid        = zcx_dsl_parse=>gc_malformed_json
+                      mv_error_code = 'DSL_EXEC_001'
+                      mv_attr1      = lx_any->get_text( ).
+      ENDTRY.
+
+      " Convert this branch's rows to nv-pairs and append.
+      DATA ls_pseudo TYPE zif_json_dsl_types=>ty_query.
+      CLEAR ls_pseudo.
+      ls_pseudo-select_fields = ls_br-select_fields.
+      ls_pseudo-sources       = ls_br-sources.
+      DATA(lt_branch_rows) = result_to_nv_rows(
+        ir_table = lr_table is_query = ls_pseudo ).
+      APPEND LINES OF lt_branch_rows TO lt_all_rows.
+    ENDLOOP.
+
+    " Dedup if UNION DISTINCT.
+    IF is_sql-union_distinct = abap_true AND lt_all_rows IS NOT INITIAL.
+      " Concatenate values per row into a sortable signature, then dedup.
+      DATA lt_seen TYPE SORTED TABLE OF string WITH UNIQUE KEY table_line.
+      DATA lt_dedup TYPE zif_json_dsl_types=>ty_result_rows.
+      LOOP AT lt_all_rows INTO DATA(lt_row).
+        DATA lv_sig TYPE string.
+        CLEAR lv_sig.
+        LOOP AT lt_row INTO DATA(ls_nv).
+          lv_sig = lv_sig && '|' && ls_nv-value.
+        ENDLOOP.
+        INSERT lv_sig INTO TABLE lt_seen.
+        IF sy-subrc = 0.
+          APPEND lt_row TO lt_dedup.
+        ENDIF.
+      ENDLOOP.
+      lt_all_rows = lt_dedup.
+    ENDIF.
+
+    et_rows  = lt_all_rows.
+    ev_count = lines( lt_all_rows ).
   endmethod.
 
 

@@ -191,6 +191,22 @@ class ZCL_JSON_DSL_PARSER definition
         !IV_JSON type STRING
       returning
         value(RS_OUTPUT) type ZIF_JSON_DSL_TYPES=>TY_OUTPUT .
+
+    methods PARSE_UNION
+      importing
+        !IV_JSON type STRING
+      returning
+        value(RS_UNION) type ZIF_JSON_DSL_TYPES=>TY_UNION
+      raising
+        ZCX_DSL_PARSE .
+
+    methods PARSE_UNION_BRANCH
+      importing
+        !IV_JSON type STRING
+      returning
+        value(RS_BRANCH) type ZIF_JSON_DSL_TYPES=>TY_UNION_BRANCH
+      raising
+        ZCX_DSL_PARSE .
 ENDCLASS.
 
 
@@ -234,7 +250,7 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
     DATA(lt_allowed) = VALUE string_table(
       ( `version` ) ( `query_id` ) ( `entity` ) ( `sources` ) ( `joins` )
       ( `select` ) ( `filters` ) ( `group_by` ) ( `metrics` ) ( `having` )
-      ( `order_by` ) ( `limit` ) ( `params` ) ( `output` )
+      ( `order_by` ) ( `limit` ) ( `params` ) ( `output` ) ( `union` )
       " Metadata fields — passed through for tracing/logging
       ( `metricName` ) ( `metricId` ) ( `priority` ) ( `description` ) ( `module` )
     ).
@@ -300,15 +316,32 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
       rs_query-joins = parse_joins( lv_joins_json ).
     ENDIF.
 
-    " 9. Select (mandatory)
+    " 8b. Union (parse early so step 9 / step 18 know if select / sources are required)
+    DATA(lv_union_json) = json_extract_member( iv_json = lv_json iv_key = 'union' ).
+    IF lv_union_json IS NOT INITIAL AND NOT json_is_null( lv_union_json ).
+      " union is exclusive with top-level entity / sources / joins
+      IF rs_query-entity IS NOT INITIAL OR rs_query-sources IS NOT INITIAL
+         OR rs_query-joins IS NOT INITIAL.
+        RAISE EXCEPTION TYPE zcx_dsl_parse
+          EXPORTING textid        = zcx_dsl_parse=>gc_entity_sources_conflict
+                    mv_error_code = 'DSL_PARSE_005'
+                    mv_attr1      = 'union conflicts with top-level entity/sources/joins'.
+      ENDIF.
+      rs_query-union = parse_union( lv_union_json ).
+    ENDIF.
+
+    " 9. Select (mandatory unless union is present)
     DATA(lv_select_json) = json_extract_member( iv_json = lv_json iv_key = 'select' ).
     IF lv_select_json IS INITIAL OR json_is_null( lv_select_json ).
-      RAISE EXCEPTION TYPE zcx_dsl_parse
-        EXPORTING textid        = zcx_dsl_parse=>gc_missing_field
-                  mv_error_code = 'DSL_PARSE_003'
-                  mv_attr1      = 'select'.
+      IF rs_query-union-is_set = abap_false.
+        RAISE EXCEPTION TYPE zcx_dsl_parse
+          EXPORTING textid        = zcx_dsl_parse=>gc_missing_field
+                    mv_error_code = 'DSL_PARSE_003'
+                    mv_attr1      = 'select'.
+      ENDIF.
+    ELSE.
+      rs_query-select_fields = parse_select( lv_select_json ).
     ENDIF.
-    rs_query-select_fields = parse_select( lv_select_json ).
 
     " 10. Filters
     DATA(lv_filters_json) = json_extract_member( iv_json = lv_json iv_key = 'filters' ).
@@ -376,12 +409,13 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
       rs_query-output-include_summary    = abap_false.
     ENDIF.
 
-    " 18. Must have entity OR sources
-    IF rs_query-entity IS INITIAL AND rs_query-sources IS INITIAL.
+    " 18. Must have entity OR sources OR union
+    IF rs_query-entity IS INITIAL AND rs_query-sources IS INITIAL
+       AND rs_query-union-is_set = abap_false.
       RAISE EXCEPTION TYPE zcx_dsl_parse
         EXPORTING textid        = zcx_dsl_parse=>gc_missing_field
                   mv_error_code = 'DSL_PARSE_003'
-                  mv_attr1      = 'entity or sources'.
+                  mv_attr1      = 'entity, sources or union'.
     ENDIF.
   endmethod.
 
@@ -894,6 +928,70 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
         value = json_extract_string( lv_val )
       ) TO rt_params.
     ENDLOOP.
+  endmethod.
+
+
+  method PARSE_UNION.
+    " Parse the top-level "union" object: { "distinct": true|false, "branches": [...] }
+    rs_union-is_set = abap_true.
+
+    DATA(lv_dist) = json_extract_member( iv_json = iv_json iv_key = 'distinct' ).
+    IF lv_dist IS NOT INITIAL.
+      rs_union-distinct = json_extract_boolean( lv_dist ).
+    ELSE.
+      rs_union-distinct = abap_true.   " UNION DISTINCT is the default semantics
+    ENDIF.
+
+    DATA(lv_branches) = json_extract_member( iv_json = iv_json iv_key = 'branches' ).
+    IF lv_branches IS INITIAL OR json_is_null( lv_branches ).
+      RAISE EXCEPTION TYPE zcx_dsl_parse
+        EXPORTING textid        = zcx_dsl_parse=>gc_missing_field
+                  mv_error_code = 'DSL_PARSE_003'
+                  mv_attr1      = 'union.branches'.
+    ENDIF.
+
+    DATA(lt_elems) = json_split_array( lv_branches ).
+    LOOP AT lt_elems INTO DATA(lv_e).
+      APPEND parse_union_branch( lv_e ) TO rs_union-branches.
+    ENDLOOP.
+  endmethod.
+
+
+  method PARSE_UNION_BRANCH.
+    DATA lv_wrapped TYPE string.
+
+    " sources
+    DATA(lv_sources) = json_extract_member( iv_json = iv_json iv_key = 'sources' ).
+    IF lv_sources IS NOT INITIAL.
+      rs_branch-sources = parse_sources( lv_sources ).
+    ENDIF.
+
+    " select
+    DATA(lv_select) = json_extract_member( iv_json = iv_json iv_key = 'select' ).
+    IF lv_select IS NOT INITIAL.
+      rs_branch-select_fields = parse_select( lv_select ).
+    ENDIF.
+
+    " filters
+    DATA(lv_filters) = json_extract_member( iv_json = iv_json iv_key = 'filters' ).
+    IF lv_filters IS NOT INITIAL AND NOT json_is_null( lv_filters ).
+      IF json_is_array( lv_filters ).
+        lv_wrapped = `{"logic":"AND","conditions":` && lv_filters && `}`.
+        parse_condition_tree(
+          EXPORTING iv_json = lv_wrapped iv_parent_id = 0
+          CHANGING ct_nodes = rs_branch-filter_nodes ).
+      ELSE.
+        parse_condition_tree(
+          EXPORTING iv_json = lv_filters iv_parent_id = 0
+          CHANGING ct_nodes = rs_branch-filter_nodes ).
+      ENDIF.
+    ENDIF.
+
+    " params (per-branch)
+    DATA(lv_params) = json_extract_member( iv_json = iv_json iv_key = 'params' ).
+    IF lv_params IS NOT INITIAL.
+      rs_branch-params = parse_params( lv_params ).
+    ENDIF.
   endmethod.
 
 
