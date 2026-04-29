@@ -533,26 +533,52 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       DATA ls_branch_sql TYPE ty_branch_sql.
       CLEAR ls_branch_sql.
 
-      " Build a synthetic ty_query for this branch, so the existing helpers work.
-      DATA ls_pseudo TYPE zif_json_dsl_types=>ty_query.
-      CLEAR ls_pseudo.
-      ls_pseudo-sources       = ls_br-sources.
-      ls_pseudo-select_fields = ls_br-select_fields.
-      ls_pseudo-filter_nodes  = ls_br-filter_nodes.
-      ls_pseudo-params        = ls_br-params.
+      " v1: each branch is single-source. Strip alias prefix from select/where so
+      " the dynamic CTE inner SELECT works — when a CTE has dynamic specs, the
+      " parser does not accept "TABLE AS alias" in its FROM token reliably, and
+      " bare table+field references avoid that issue entirely. This is also fine
+      " for the in-memory path (no JOIN inside the branch → no ambiguity).
+      DATA lv_table_only TYPE string.
+      READ TABLE ls_br-sources INTO DATA(ls_src) INDEX 1.
+      IF sy-subrc = 0.
+        lv_table_only = ls_src-table.
+      ENDIF.
+      ls_branch_sql-from_clause = lv_table_only.
 
-      " Branch SELECT — always comma-separated (we will execute as new-syntax UNION)
+      " SELECT: bare field names (strip "alias." prefix)
       DATA lt_parts TYPE string_table.
       LOOP AT ls_br-select_fields INTO DATA(ls_fld).
         IF ls_fld-field IS NOT INITIAL.
-          APPEND to_sql_field( ls_fld-field ) TO lt_parts.
+          DATA lv_field TYPE string.
+          lv_field = ls_fld-field.
+          IF lv_field CS '.'.
+            SPLIT lv_field AT '.' INTO DATA(lv_a) DATA(lv_f).
+            lv_field = lv_f.
+          ENDIF.
+          APPEND lv_field TO lt_parts.
         ENDIF.
       ENDLOOP.
       ls_branch_sql-select_clause = concat_lines_of( table = lt_parts sep = `, ` ).
 
-      ls_branch_sql-from_clause   = build_from_clause( ls_br-sources ).
-      ls_branch_sql-where_clause  = build_where_clause(
-        it_nodes  = ls_br-filter_nodes
+      " WHERE: build from a copy of filter_nodes with alias prefixes stripped
+      DATA lt_nodes TYPE zif_json_dsl_types=>ty_cond_nodes.
+      lt_nodes = ls_br-filter_nodes.
+      LOOP AT lt_nodes ASSIGNING FIELD-SYMBOL(<ls_n>).
+        IF <ls_n>-field CS '.'.
+          SPLIT <ls_n>-field AT '.' INTO DATA(lv_fa) DATA(lv_ff).
+          <ls_n>-field = lv_ff.
+        ENDIF.
+        IF <ls_n>-left_field CS '.'.
+          SPLIT <ls_n>-left_field AT '.' INTO DATA(lv_la) DATA(lv_lf).
+          <ls_n>-left_field = lv_lf.
+        ENDIF.
+        IF <ls_n>-right_field CS '.'.
+          SPLIT <ls_n>-right_field AT '.' INTO DATA(lv_ra) DATA(lv_rf).
+          <ls_n>-right_field = lv_rf.
+        ENDIF.
+      ENDLOOP.
+      ls_branch_sql-where_clause = build_where_clause(
+        it_nodes  = lt_nodes
         it_params = ls_br-params ).
 
       APPEND ls_branch_sql TO cs_sql-union_branches.
