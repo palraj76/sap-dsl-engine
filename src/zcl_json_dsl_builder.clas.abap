@@ -545,7 +545,10 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       ENDIF.
       ls_branch_sql-from_clause = lv_table_only.
 
-      " SELECT: bare field names (strip "alias." prefix)
+      " SELECT: bare field names (strip "alias." prefix). Space-separated to
+      " match the OLD Open SQL syntax used by the in-memory branch executor.
+      " (Old syntax SELECT (f1 f2) FROM ... is more lenient about RTTI work
+      " area type compatibility than the strict @-form.)
       DATA lt_parts TYPE string_table.
       LOOP AT ls_br-select_fields INTO DATA(ls_fld).
         IF ls_fld-field IS NOT INITIAL.
@@ -558,7 +561,7 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
           APPEND lv_field TO lt_parts.
         ENDIF.
       ENDLOOP.
-      ls_branch_sql-select_clause = concat_lines_of( table = lt_parts sep = `, ` ).
+      ls_branch_sql-select_clause = concat_lines_of( table = lt_parts sep = ` ` ).
 
       " WHERE: build from a copy of filter_nodes with alias prefixes stripped
       DATA lt_nodes TYPE zif_json_dsl_types=>ty_cond_nodes.
