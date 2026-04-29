@@ -798,9 +798,12 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
   method EXECUTE_UNION_CTE_COUNT.
     " Hardcoded 2-branch CTE with dynamic field/from/where slots.
-    " The kernel parses the WITH/UNION grammar at compile time; everything
-    " inside the parenthesised SELECT can be dynamic.
-    DATA lv_count TYPE i.
+    " Because the inner SELECTs use dynamic specifications (lv_fa)/(lv_ta)/(lv_wa),
+    " the CTE definition is "not completely static" — and ABAP forbids static
+    " references to such a CTE. The outer FROM must therefore use a string
+    " variable holding the CTE name.
+    DATA lv_count    TYPE i.
+    DATA lv_cte_name TYPE string VALUE `+combined` ##NO_TEXT.
 
     READ TABLE is_sql-union_branches INTO DATA(ls_a) INDEX 1.
     READ TABLE is_sql-union_branches INTO DATA(ls_b) INDEX 2.
@@ -818,25 +821,25 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
                  SELECT (lv_fa) FROM (lv_ta) WHERE (lv_wa)
                  UNION DISTINCT
                  SELECT (lv_fb) FROM (lv_tb) WHERE (lv_wb) )
-            SELECT COUNT(*) FROM +combined INTO @lv_count.
+            SELECT COUNT(*) FROM (lv_cte_name) INTO @lv_count.
         ELSEIF lv_wa IS NOT INITIAL.
           WITH +combined AS (
                  SELECT (lv_fa) FROM (lv_ta) WHERE (lv_wa)
                  UNION DISTINCT
                  SELECT (lv_fb) FROM (lv_tb) )
-            SELECT COUNT(*) FROM +combined INTO @lv_count.
+            SELECT COUNT(*) FROM (lv_cte_name) INTO @lv_count.
         ELSEIF lv_wb IS NOT INITIAL.
           WITH +combined AS (
                  SELECT (lv_fa) FROM (lv_ta)
                  UNION DISTINCT
                  SELECT (lv_fb) FROM (lv_tb) WHERE (lv_wb) )
-            SELECT COUNT(*) FROM +combined INTO @lv_count.
+            SELECT COUNT(*) FROM (lv_cte_name) INTO @lv_count.
         ELSE.
           WITH +combined AS (
                  SELECT (lv_fa) FROM (lv_ta)
                  UNION DISTINCT
                  SELECT (lv_fb) FROM (lv_tb) )
-            SELECT COUNT(*) FROM +combined INTO @lv_count.
+            SELECT COUNT(*) FROM (lv_cte_name) INTO @lv_count.
         ENDIF.
 
         rv_count = lv_count.
