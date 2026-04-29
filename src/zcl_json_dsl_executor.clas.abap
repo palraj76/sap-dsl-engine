@@ -943,13 +943,17 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
       DATA(lv_from)   = ls_bsql-from_clause.
       DATA(lv_where)  = ls_bsql-where_clause.
 
+      " Use OLD Open SQL syntax (no @) for branch SELECTs — non-strict mode is
+      " lenient about type compatibility between dynamic SELECT columns and the
+      " RTTI-built work area. The new (@) syntax raises "work area not Unicode
+      " compatible" errors when DDIC types don't exactly line up.
       TRY.
           IF lv_where IS NOT INITIAL.
-            SELECT (lv_fields) FROM (lv_from) WHERE (lv_where)
-              INTO TABLE @<lt_branch>.
+            SELECT (lv_fields) INTO TABLE <lt_branch>
+              FROM (lv_from) WHERE (lv_where).
           ELSE.
-            SELECT (lv_fields) FROM (lv_from)
-              INTO TABLE @<lt_branch>.
+            SELECT (lv_fields) INTO TABLE <lt_branch>
+              FROM (lv_from).
           ENDIF.
         CATCH cx_sy_dynamic_osql_error INTO DATA(lx_err).
           RAISE EXCEPTION TYPE zcx_dsl_parse
