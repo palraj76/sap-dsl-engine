@@ -745,24 +745,39 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
     ENDIF.
 
     IF lv_use_cte = abap_true.
-      DATA(lv_count) = execute_union_cte_count( is_sql ).
-      cs_response-meta-strategy_used = 'CTE_UNION'.
-      cs_response-meta-row_count     = 1.
+      " Try CTE path opportunistically — fall through to in-memory on any failure.
+      " ABAP CTE grammar restrictions on dynamic specs can cause runtime parser
+      " errors that we cannot reliably predict at probe time, so we wrap the
+      " attempt in a local TRY/CATCH and fall back gracefully.
+      DATA lv_count TYPE i.
+      DATA lv_cte_failed TYPE abap_bool VALUE abap_false.
+      TRY.
+          lv_count = execute_union_cte_count( is_sql ).
+        CATCH zcx_dsl_parse.
+          lv_cte_failed = abap_true.
+        CATCH cx_root.
+          lv_cte_failed = abap_true.
+      ENDTRY.
 
-      " Surface the count as a single aggregate (matching alias from query metrics).
-      DATA lv_alias TYPE string.
-      READ TABLE is_query-metrics INTO DATA(ls_m) INDEX 1.
-      IF sy-subrc = 0 AND ls_m-alias IS NOT INITIAL.
-        lv_alias = ls_m-alias.
-      ELSE.
-        lv_alias = 'total'.
+      IF lv_cte_failed = abap_false.
+        cs_response-meta-strategy_used = 'CTE_UNION'.
+        cs_response-meta-row_count     = 1.
+
+        " Surface the count as a single aggregate (matching alias from query metrics).
+        DATA lv_alias TYPE string.
+        READ TABLE is_query-metrics INTO DATA(ls_m) INDEX 1.
+        IF sy-subrc = 0 AND ls_m-alias IS NOT INITIAL.
+          lv_alias = ls_m-alias.
+        ELSE.
+          lv_alias = 'total'.
+        ENDIF.
+        APPEND VALUE zif_json_dsl_types=>ty_aggregate(
+          alias = lv_alias
+          type  = 'count'
+          value = |{ lv_count }|
+        ) TO cs_response-aggregates.
+        RETURN.
       ENDIF.
-      APPEND VALUE zif_json_dsl_types=>ty_aggregate(
-        alias = lv_alias
-        type  = 'count'
-        value = |{ lv_count }|
-      ) TO cs_response-aggregates.
-      RETURN.
     ENDIF.
 
     " ── In-memory path ──
