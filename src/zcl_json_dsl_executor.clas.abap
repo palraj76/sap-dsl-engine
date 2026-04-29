@@ -884,58 +884,27 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
       READ TABLE is_sql-union_branches INTO DATA(ls_bsql) INDEX lv_idx.
       IF sy-subrc <> 0. CONTINUE. ENDIF.
 
-      " Build a per-branch dynamic structure (RTTI) using DDIC types.
-      DATA lt_components TYPE cl_abap_structdescr=>component_table.
-      DATA ls_comp       LIKE LINE OF lt_components.
-      DATA lv_tabname    TYPE tabname.
-      DATA lv_fieldname  TYPE fieldname.
-      CLEAR lt_components.
+      " Use the DDIC table struct itself as the work area and INTO CORRESPONDING
+      " FIELDS to map dynamically-selected columns by NAME. This sidesteps the
+      " type-compatibility issues we hit when building a custom RTTI struct.
+      READ TABLE ls_br-sources INTO DATA(ls_src) INDEX 1.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
 
-      LOOP AT ls_br-select_fields INTO DATA(ls_fld).
-        CLEAR ls_comp.
-        IF ls_fld-alias IS NOT INITIAL.
-          ls_comp-name = to_upper( ls_fld-alias ).
-        ELSE.
-          ls_comp-name = to_upper( ls_fld-field ).
-          REPLACE ALL OCCURRENCES OF '.' IN ls_comp-name WITH '_'.
-        ENDIF.
-
-        CLEAR lv_tabname.
-        IF ls_fld-field CS '.'.
-          SPLIT ls_fld-field AT '.' INTO DATA(lv_alias) DATA(lv_fname).
-          READ TABLE ls_br-sources INTO DATA(ls_src) WITH KEY alias = lv_alias.
-          IF sy-subrc = 0. lv_tabname = ls_src-table. ENDIF.
-        ENDIF.
-
-        IF lv_tabname IS NOT INITIAL.
-          lv_fieldname = lv_fname.
-          DATA lv_exists TYPE abap_bool.
-          lv_exists = abap_false.
-          SELECT COUNT(*) FROM dd03l
-            WHERE tabname = lv_tabname AND fieldname = lv_fieldname AND as4local = 'A'.
-          IF sy-dbcnt > 0. lv_exists = abap_true. ENDIF.
-
-          IF lv_exists = abap_true.
-            TRY.
-                ls_comp-type = CAST cl_abap_elemdescr(
-                  cl_abap_typedescr=>describe_by_name( |{ lv_tabname }-{ lv_fieldname }| ) ).
-              CATCH cx_root.
-                ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
-            ENDTRY.
-          ELSE.
-            ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
-          ENDIF.
-        ELSE.
-          ls_comp-type = cl_abap_elemdescr=>get_c( p_length = 255 ).
-        ENDIF.
-
-        APPEND ls_comp TO lt_components.
-      ENDLOOP.
-
-      DATA(lo_struct) = cl_abap_structdescr=>create( lt_components ).
-      DATA(lo_table)  = cl_abap_tabledescr=>create( lo_struct ).
       DATA lr_table TYPE REF TO data.
-      CREATE DATA lr_table TYPE HANDLE lo_table.
+      DATA lo_struct TYPE REF TO cl_abap_structdescr.
+      DATA lo_table  TYPE REF TO cl_abap_tabledescr.
+      TRY.
+          lo_struct = CAST cl_abap_structdescr(
+            cl_abap_typedescr=>describe_by_name( ls_src-table ) ).
+          lo_table  = cl_abap_tabledescr=>create( lo_struct ).
+          CREATE DATA lr_table TYPE HANDLE lo_table.
+        CATCH cx_root INTO DATA(lx_rtti).
+          RAISE EXCEPTION TYPE zcx_dsl_parse
+            EXPORTING textid        = zcx_dsl_parse=>gc_malformed_json
+                      mv_error_code = 'DSL_EXEC_001'
+                      mv_attr1      = lx_rtti->get_text( ).
+      ENDTRY.
+
       FIELD-SYMBOLS: <lt_branch> TYPE STANDARD TABLE.
       ASSIGN lr_table->* TO <lt_branch>.
 
@@ -943,16 +912,14 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
       DATA(lv_from)   = ls_bsql-from_clause.
       DATA(lv_where)  = ls_bsql-where_clause.
 
-      " Use OLD Open SQL syntax (no @) for branch SELECTs — non-strict mode is
-      " lenient about type compatibility between dynamic SELECT columns and the
-      " RTTI-built work area. The new (@) syntax raises "work area not Unicode
-      " compatible" errors when DDIC types don't exactly line up.
+      " OLD Open SQL syntax with INTO CORRESPONDING FIELDS — name-based mapping
+      " from selected columns to matching components of the DDIC table struct.
       TRY.
           IF lv_where IS NOT INITIAL.
-            SELECT (lv_fields) INTO TABLE <lt_branch>
+            SELECT (lv_fields) INTO CORRESPONDING FIELDS OF TABLE <lt_branch>
               FROM (lv_from) WHERE (lv_where).
           ELSE.
-            SELECT (lv_fields) INTO TABLE <lt_branch>
+            SELECT (lv_fields) INTO CORRESPONDING FIELDS OF TABLE <lt_branch>
               FROM (lv_from).
           ENDIF.
         CATCH cx_sy_dynamic_osql_error INTO DATA(lx_err).
@@ -967,14 +934,36 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
                       mv_attr1      = lx_any->get_text( ).
       ENDTRY.
 
-      " Convert this branch's rows to nv-pairs and append.
-      DATA ls_pseudo TYPE zif_json_dsl_types=>ty_query.
-      CLEAR ls_pseudo.
-      ls_pseudo-select_fields = ls_br-select_fields.
-      ls_pseudo-sources       = ls_br-sources.
-      DATA(lt_branch_rows) = result_to_nv_rows(
-        ir_table = lr_table is_query = ls_pseudo ).
-      APPEND LINES OF lt_branch_rows TO lt_all_rows.
+      " Convert this branch's rows to nv-pairs by reading named components.
+      LOOP AT <lt_branch> ASSIGNING FIELD-SYMBOL(<ls_row>).
+        DATA lt_nv TYPE zif_json_dsl_types=>ty_nv_pairs.
+        CLEAR lt_nv.
+        LOOP AT ls_br-select_fields INTO DATA(ls_fld).
+          DATA lv_compname TYPE string.
+          IF ls_fld-field CS '.'.
+            SPLIT ls_fld-field AT '.' INTO DATA(lv_a2) DATA(lv_f2).
+            lv_compname = to_upper( lv_f2 ).
+          ELSE.
+            lv_compname = to_upper( ls_fld-field ).
+          ENDIF.
+          DATA lv_value TYPE string.
+          CLEAR lv_value.
+          ASSIGN COMPONENT lv_compname OF STRUCTURE <ls_row> TO FIELD-SYMBOL(<lv_v>).
+          IF sy-subrc = 0.
+            lv_value = <lv_v>.
+          ENDIF.
+          DATA lv_name TYPE string.
+          IF ls_fld-alias IS NOT INITIAL.
+            lv_name = ls_fld-alias.
+          ELSE.
+            lv_name = ls_fld-field.
+          ENDIF.
+          APPEND VALUE zif_json_dsl_types=>ty_nv_pair(
+            name = lv_name value = lv_value
+          ) TO lt_nv.
+        ENDLOOP.
+        APPEND lt_nv TO lt_all_rows.
+      ENDLOOP.
     ENDLOOP.
 
     " Dedup if UNION DISTINCT.
