@@ -732,13 +732,16 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
   method EXECUTE_UNION.
     " Decide execution path:
-    "   - CTE path: when query is COUNT(*) only, exactly 2 branches, and
-    "     ZCL_JSON_DSL_CAPABILITY says CTE+UNION is supported.
-    "   - In-memory path: every other case (rows, >2 branches, no CTE support).
+    "   - CTE path: only when caller wants COUNT and explicitly suppresses rows
+    "     (output.include_rows = false). In that case we never need to
+    "     materialize the rows on the app server, so the CTE optimization is
+    "     worth attempting. Requires exactly 2 branches and CTE support.
+    "   - In-memory path: every other case (rows wanted, >2 branches, no CTE).
     DATA(lv_branch_count) = lines( is_sql-union_branches ).
     DATA(lv_use_cte) = abap_false.
 
     IF is_sql-union_count_only = abap_true
+       AND is_query-output-include_rows = abap_false
        AND lv_branch_count = 2
        AND zcl_json_dsl_capability=>is_cte_union_supported( ) = abap_true.
       lv_use_cte = abap_true.
@@ -746,9 +749,6 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
     IF lv_use_cte = abap_true.
       " Try CTE path opportunistically — fall through to in-memory on any failure.
-      " ABAP CTE grammar restrictions on dynamic specs can cause runtime parser
-      " errors that we cannot reliably predict at probe time, so we wrap the
-      " attempt in a local TRY/CATCH and fall back gracefully.
       DATA lv_count TYPE i.
       DATA lv_cte_failed TYPE abap_bool VALUE abap_false.
       TRY.
@@ -763,7 +763,6 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         cs_response-meta-strategy_used = 'CTE_UNION'.
         cs_response-meta-row_count     = 1.
 
-        " Surface the count as a single aggregate (matching alias from query metrics).
         DATA lv_alias TYPE string.
         READ TABLE is_query-metrics INTO DATA(ls_m) INDEX 1.
         IF sy-subrc = 0 AND ls_m-alias IS NOT INITIAL.
@@ -789,8 +788,9 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
     cs_response-meta-strategy_used = 'INMEMORY_UNION'.
 
-    IF is_sql-union_count_only = abap_true.
-      " Caller asked for COUNT(*) — surface as aggregate, not rows.
+    " Emit aggregates when caller has metrics AND wants aggregates (default true).
+    IF is_sql-union_count_only = abap_true
+       AND is_query-output-include_aggregates = abap_true.
       DATA lv_alias_im TYPE string.
       READ TABLE is_query-metrics INTO DATA(ls_m_im) INDEX 1.
       IF sy-subrc = 0 AND ls_m_im-alias IS NOT INITIAL.
@@ -803,10 +803,19 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         type  = 'count'
         value = |{ lv_inmem_count }|
       ) TO cs_response-aggregates.
+    ENDIF.
+
+    " Emit rows when caller wants rows (default true). Both rows and aggregates
+    " can coexist — the in-memory path computes them from the same materialized
+    " result set, so there is no extra cost for returning both.
+    IF is_query-output-include_rows = abap_true.
+      cs_response-rows = lt_rows.
+    ENDIF.
+
+    " row_count reflects the rows array; if no rows but aggregates present, 1.
+    cs_response-meta-row_count = lines( cs_response-rows ).
+    IF cs_response-meta-row_count = 0 AND cs_response-aggregates IS NOT INITIAL.
       cs_response-meta-row_count = 1.
-    ELSE.
-      cs_response-rows           = lt_rows.
-      cs_response-meta-row_count = lines( lt_rows ).
     ENDIF.
   endmethod.
 
