@@ -1099,6 +1099,23 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
       ) TO cs_response-debug-source_counts.
     ENDLOOP.
 
+    " Per-join-target row counts (unfiltered) - so callers can see whether
+    " an empty result is caused by an empty join target.
+    LOOP AT is_query-joins INTO DATA(ls_join).
+      DATA lv_jcount TYPE i.
+      DATA lv_jtable TYPE string.
+      lv_jtable = ls_join-target_table.
+      TRY.
+          SELECT COUNT(*) FROM (lv_jtable) INTO @lv_jcount.
+        CATCH cx_root.
+          lv_jcount = -1.
+      ENDTRY.
+      APPEND VALUE zif_json_dsl_types=>ty_nv_pair(
+        name  = |{ ls_join-type } join:{ ls_join-target_table }|
+        value = |{ lv_jcount }|
+      ) TO cs_response-debug-source_counts.
+    ENDLOOP.
+
     " For union queries, also report per-branch source counts.
     IF is_sql-is_union = abap_true.
       LOOP AT is_query-union-branches INTO DATA(ls_br).
