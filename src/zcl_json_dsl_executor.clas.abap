@@ -105,6 +105,20 @@ class ZCL_JSON_DSL_EXECUTOR definition
     methods GET_TIMESTAMP
       returning
         value(RV_TS) type TIMESTAMP .
+
+    methods ENRICH_HINT
+      importing
+        !IV_MESSAGE type STRING
+        !IV_SQL     type STRING
+      returning
+        value(RV_HINT) type STRING .
+
+    methods POPULATE_DEBUG
+      importing
+        !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY
+        !IS_SQL   type ZCL_JSON_DSL_BUILDER=>TY_SQL_RESULT
+      changing
+        !CS_RESPONSE type ZIF_JSON_DSL_TYPES=>TY_RESPONSE .
 ENDCLASS.
 
 
@@ -137,6 +151,11 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
           IF rs_response-meta-row_count = 0.
             rs_response-meta-row_count = lines( rs_response-rows ).
           ENDIF.
+          IF is_query-output-debug = abap_true.
+            populate_debug(
+              EXPORTING is_query = is_query is_sql = is_sql
+              CHANGING  cs_response = rs_response ).
+          ENDIF.
           write_audit_log(
             is_query    = is_query
             is_sql      = is_sql
@@ -159,20 +178,22 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         ENDCASE.
 
       CATCH cx_sy_dynamic_osql_error INTO DATA(lx_sql).
+        DATA(lv_sql_text_a) = build_dynamic_select( is_sql ).
         APPEND VALUE zst_dsl_error(
           code     = 'DSL_EXEC_001'
           severity = 'ERROR'
           message  = lx_sql->get_text( )
-          hint     = |Generated SQL: { build_dynamic_select( is_sql ) }|
+          hint     = enrich_hint( iv_message = lx_sql->get_text( ) iv_sql = lv_sql_text_a )
         ) TO rs_response-errors.
         RETURN.
 
       CATCH cx_root INTO DATA(lx_any).
+        DATA(lv_sql_text_b) = build_dynamic_select( is_sql ).
         APPEND VALUE zst_dsl_error(
           code     = 'DSL_EXEC_001'
           severity = 'ERROR'
           message  = lx_any->get_text( )
-          hint     = |Generated SQL: { build_dynamic_select( is_sql ) }|
+          hint     = enrich_hint( iv_message = lx_any->get_text( ) iv_sql = lv_sql_text_b )
         ) TO rs_response-errors.
         RETURN.
     ENDTRY.
@@ -208,6 +229,13 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
     " Include summary total if requested
     IF is_query-output-include_summary = abap_true.
       rs_response-meta-total_count = lv_dbcnt.
+    ENDIF.
+
+    " Populate debug block if caller asked for it
+    IF is_query-output-debug = abap_true.
+      populate_debug(
+        EXPORTING is_query = is_query is_sql = is_sql
+        CHANGING  cs_response = rs_response ).
     ENDIF.
 
     " Write audit log for Flex Mode
@@ -1001,5 +1029,94 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
   method GET_TIMESTAMP.
     GET TIME STAMP FIELD rv_ts.
+  endmethod.
+
+
+  method ENRICH_HINT.
+    DATA lv_msg TYPE string.
+    DATA lt_hints TYPE string_table.
+
+    lv_msg = to_upper( iv_message ).
+
+    " Pattern: Boolean expression rejected
+    IF lv_msg CS 'BOOLEAN EXPRESSION' OR lv_msg CS 'A BOOLEAN EXPRESSIO'.
+      APPEND `Engine hint: ABAP rejected the WHERE clause. Common causes on this release: ` &&
+             `(1) operator '!=' is not accepted - use {"op":"NOT IN","value":["X"]} instead; ` &&
+             `(2) cross-type field-vs-field comparison (e.g. DATS char-8 vs DEC15 timestamp) - ` &&
+             `compute the comparison in the caller and filter on a single typed field.` TO lt_hints.
+    ENDIF.
+
+    " Pattern: data type mismatch
+    IF lv_msg CS 'DATA TYPE OF TH' OR lv_msg CS 'DATA TYPE DOES NOT MATCH'
+       OR lv_msg CS 'INCOMPATIBLE TYPE'.
+      APPEND `Engine hint: type mismatch in SELECT or aggregate. Check that aggregate fields ` &&
+             `are numeric (MIN/MAX/SUM/AVG on DATS or CHAR will fail), and that filter values ` &&
+             `match the field's DDIC type (DATS = "YYYYMMDD" char-8; DEC = numeric; DEC15 = ` &&
+             `"YYYYMMDDhhmmss" packed).` TO lt_hints.
+    ENDIF.
+
+    " Pattern: unknown column / field
+    IF lv_msg CS 'UNKNOWN COLUMN' OR lv_msg CS 'FIELD IS UNKNOWN'
+       OR lv_msg CS 'NOT KNOWN' OR lv_msg CS 'IS UNKNOWN'.
+      APPEND `Engine hint: unknown column. Verify the field name (case-insensitive but typo-` &&
+             `sensitive) and that the parent table is whitelisted in ZJSON_DSL_WL with that ` &&
+             `field exposed.` TO lt_hints.
+    ENDIF.
+
+    " Pattern: table 'P' / dynamic FROM weirdness (CTE-related)
+    IF lv_msg CS `TABLE 'P'` OR lv_msg CS 'NOT COMPLETELY STATIC'.
+      APPEND `Engine hint: dynamic CTE construction failed. Engine should fall back to ` &&
+             `INMEMORY_UNION automatically; if you see this, file a bug.` TO lt_hints.
+    ENDIF.
+
+    " Build the final hint
+    IF lt_hints IS INITIAL.
+      rv_hint = |Generated SQL: { iv_sql }|.
+    ELSE.
+      rv_hint = concat_lines_of( table = lt_hints sep = | | ) && | | && |Generated SQL: { iv_sql }|.
+    ENDIF.
+  endmethod.
+
+
+  method POPULATE_DEBUG.
+    cs_response-debug-enabled       = abap_true.
+    cs_response-debug-generated_sql = build_dynamic_select( is_sql ).
+    cs_response-debug-strategy      = is_sql-strategy.
+
+    " Per-source row counts (unfiltered) - one COUNT(*) per declared source.
+    LOOP AT is_query-sources INTO DATA(ls_src).
+      DATA lv_count TYPE i.
+      DATA lv_table TYPE string.
+      lv_table = ls_src-table.
+      TRY.
+          SELECT COUNT(*) FROM (lv_table) INTO @lv_count.
+        CATCH cx_root.
+          lv_count = -1.
+      ENDTRY.
+      APPEND VALUE zif_json_dsl_types=>ty_nv_pair(
+        name  = ls_src-table
+        value = |{ lv_count }|
+      ) TO cs_response-debug-source_counts.
+    ENDLOOP.
+
+    " For union queries, also report per-branch source counts.
+    IF is_sql-is_union = abap_true.
+      LOOP AT is_query-union-branches INTO DATA(ls_br).
+        LOOP AT ls_br-sources INTO DATA(ls_bsrc).
+          DATA lv_bcount TYPE i.
+          DATA lv_btable TYPE string.
+          lv_btable = ls_bsrc-table.
+          TRY.
+              SELECT COUNT(*) FROM (lv_btable) INTO @lv_bcount.
+            CATCH cx_root.
+              lv_bcount = -1.
+          ENDTRY.
+          APPEND VALUE zif_json_dsl_types=>ty_nv_pair(
+            name  = |union:{ ls_bsrc-table }|
+            value = |{ lv_bcount }|
+          ) TO cs_response-debug-source_counts.
+        ENDLOOP.
+      ENDLOOP.
+    ENDIF.
   endmethod.
 ENDCLASS.

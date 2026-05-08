@@ -275,6 +275,24 @@ CLASS ZCL_HTTP_DSL_HANDLER IMPLEMENTATION.
     " Errors
     rv_json = rv_json && ',"errors":' && serialize_errors( is_response-errors ).
 
+    " Debug block (only emitted when output.debug = X was set)
+    IF is_response-debug-enabled = abap_true.
+      rv_json = rv_json && ',"debug":{'.
+      rv_json = rv_json && '"generated_sql":"'
+             && escape_json_string( is_response-debug-generated_sql ) && '"'.
+      rv_json = rv_json && ',"strategy":"'
+             && escape_json_string( is_response-debug-strategy ) && '"'.
+      rv_json = rv_json && ',"source_counts":['.
+      DATA lv_dbg_first TYPE abap_bool VALUE abap_true.
+      LOOP AT is_response-debug-source_counts INTO DATA(ls_sc).
+        IF lv_dbg_first = abap_false. rv_json = rv_json && ','. ENDIF.
+        rv_json = rv_json && '{"table":"' && escape_json_string( ls_sc-name )
+               && '","row_count":' && ls_sc-value && '}'.
+        lv_dbg_first = abap_false.
+      ENDLOOP.
+      rv_json = rv_json && ']}'.
+    ENDIF.
+
     rv_json = rv_json && '}'.
   endmethod.
 

@@ -1016,5 +1016,12 @@ CLASS ZCL_JSON_DSL_PARSER IMPLEMENTATION.
     ELSE.
       rs_output-include_summary = abap_false.
     ENDIF.
+
+    DATA(lv_dbg) = json_extract_member( iv_json = iv_json iv_key = 'debug' ).
+    IF lv_dbg IS NOT INITIAL.
+      rs_output-debug = json_extract_boolean( lv_dbg ).
+    ELSE.
+      rs_output-debug = abap_false.
+    ENDIF.
   endmethod.
 ENDCLASS.

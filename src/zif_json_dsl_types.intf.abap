@@ -99,6 +99,7 @@ interface ZIF_JSON_DSL_TYPES
       include_rows       TYPE abap_bool,
       include_aggregates TYPE abap_bool,
       include_summary    TYPE abap_bool,
+      debug              TYPE abap_bool,
     END OF ty_output .
 
   " ─── Union branch (v1: single source set + select + optional filters) ───
@@ -176,6 +177,15 @@ interface ZIF_JSON_DSL_TYPES
       entity_resolved         TYPE string,
     END OF ty_meta .
 
+  " ─── Debug info (populated only when output.debug = X) ───
+  types:
+    BEGIN OF ty_debug_info,
+      enabled       TYPE abap_bool,
+      generated_sql TYPE string,
+      strategy      TYPE string,
+      source_counts TYPE ty_nv_pairs,
+    END OF ty_debug_info .
+
   types:
     BEGIN OF ty_response,
       query_id    TYPE string,
@@ -188,6 +198,7 @@ interface ZIF_JSON_DSL_TYPES
       meta        TYPE ty_meta,
       warnings    TYPE ztt_dsl_error,
       errors      TYPE ztt_dsl_error,
+      debug       TYPE ty_debug_info,
     END OF ty_response .
 
 endinterface.
