@@ -779,12 +779,16 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
       " Try CTE path opportunistically — fall through to in-memory on any failure.
       DATA lv_count TYPE i.
       DATA lv_cte_failed TYPE abap_bool VALUE abap_false.
+      DATA lv_cte_error  TYPE string.
+      CLEAR lv_cte_error.
       TRY.
           lv_count = execute_union_cte_count( is_sql ).
-        CATCH zcx_dsl_parse.
+        CATCH zcx_dsl_parse INTO DATA(lx_cte).
           lv_cte_failed = abap_true.
-        CATCH cx_root.
+          lv_cte_error  = lx_cte->get_text( ).
+        CATCH cx_root INTO DATA(lx_cte_any).
           lv_cte_failed = abap_true.
+          lv_cte_error  = lx_cte_any->get_text( ).
       ENDTRY.
 
       IF lv_cte_failed = abap_false.
@@ -808,6 +812,21 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
     ENDIF.
 
     " ── In-memory path ──
+    " If we got here because the CTE attempt failed, say so. A silent
+    " fall-through hid a broken CTE path for ten commits — the in-memory path
+    " reads every qualifying row into the app server, so degrading into it is
+    " never a non-event and must be visible to the caller.
+    IF lv_cte_error IS NOT INITIAL.
+      APPEND VALUE zst_dsl_error(
+        code     = 'DSL_EXEC_007'
+        severity = 'WARNING'
+        message  = |CTE union path failed, fell back to in-memory execution: { lv_cte_error }|
+        hint     = 'The in-memory path materialises every qualifying row. ' &&
+                   'On large tables this risks TSV_TNEW_PAGE_ALLOC_FAILED. ' &&
+                   'Investigate the CTE failure rather than relying on the fallback.'
+      ) TO cs_response-warnings.
+    ENDIF.
+
     DATA lt_rows  TYPE zif_json_dsl_types=>ty_result_rows.
     DATA lv_inmem_count TYPE i.
     execute_union_inmemory(
@@ -860,10 +879,15 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
     READ TABLE is_sql-union_branches INTO DATA(ls_a) INDEX 1.
     READ TABLE is_sql-union_branches INTO DATA(ls_b) INDEX 2.
 
-    DATA(lv_fa) = ls_a-select_clause.
+    " Use the COMMA-separated field list. The outer SELECT below uses
+    " INTO @lv_count, which puts the statement in strict syntax mode, and a
+    " strict-mode dynamic column list must be comma-separated. The
+    " space-separated select_clause is for the OLD-syntax in-memory path only —
+    " feeding it here fails with: "<field>" is not valid here.
+    DATA(lv_fa) = ls_a-select_clause_csv.
     DATA(lv_ta) = ls_a-from_clause.
     DATA(lv_wa) = ls_a-where_clause.
-    DATA(lv_fb) = ls_b-select_clause.
+    DATA(lv_fb) = ls_b-select_clause_csv.
     DATA(lv_tb) = ls_b-from_clause.
     DATA(lv_wb) = ls_b-where_clause.
 

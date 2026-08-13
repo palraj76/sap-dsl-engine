@@ -7,9 +7,17 @@ class ZCL_JSON_DSL_BUILDER definition
 
     types:
       BEGIN OF ty_branch_sql,
-        select_clause TYPE string,
-        from_clause   TYPE string,
-        where_clause  TYPE string,
+        " Space-separated field list — OLD Open SQL syntax, consumed by the
+        " in-memory branch executor.
+        select_clause     TYPE string,
+        " Comma-separated field list — NEW (strict) Open SQL syntax, consumed by
+        " the CTE path. The CTE outer SELECT uses INTO @lv_count, which puts the
+        " whole statement in strict mode, and a strict-mode dynamic column list
+        " must be comma-separated. Keeping both forms means neither path has to
+        " compromise the other's syntax requirements.
+        select_clause_csv TYPE string,
+        from_clause       TYPE string,
+        where_clause      TYPE string,
       END OF ty_branch_sql .
     types ty_branch_sqls TYPE STANDARD TABLE OF ty_branch_sql WITH DEFAULT KEY .
 
@@ -538,7 +546,11 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       " parser does not accept "TABLE AS alias" in its FROM token reliably, and
       " bare table+field references avoid that issue entirely. This is also fine
       " for the in-memory path (no JOIN inside the branch → no ambiguity).
+      " NOTE: ABAP DATA declarations are method-scoped, not block-scoped, so
+      " every variable below survives across loop iterations. Each one must be
+      " cleared explicitly or branch N inherits branch N-1's content.
       DATA lv_table_only TYPE string.
+      CLEAR lv_table_only.
       READ TABLE ls_br-sources INTO DATA(ls_src) INDEX 1.
       IF sy-subrc = 0.
         lv_table_only = ls_src-table.
@@ -550,6 +562,7 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
       " (Old syntax SELECT (f1 f2) FROM ... is more lenient about RTTI work
       " area type compatibility than the strict @-form.)
       DATA lt_parts TYPE string_table.
+      CLEAR lt_parts.
       LOOP AT ls_br-select_fields INTO DATA(ls_fld).
         IF ls_fld-field IS NOT INITIAL.
           DATA lv_field TYPE string.
@@ -561,7 +574,10 @@ CLASS ZCL_JSON_DSL_BUILDER IMPLEMENTATION.
           APPEND lv_field TO lt_parts.
         ENDIF.
       ENDLOOP.
-      ls_branch_sql-select_clause = concat_lines_of( table = lt_parts sep = ` ` ).
+      " Both separators are produced from the same field list so the two
+      " execution paths can never drift apart again.
+      ls_branch_sql-select_clause     = concat_lines_of( table = lt_parts sep = ` ` ).
+      ls_branch_sql-select_clause_csv = concat_lines_of( table = lt_parts sep = `, ` ).
 
       " WHERE: build from a copy of filter_nodes with alias prefixes stripped
       DATA lt_nodes TYPE zif_json_dsl_types=>ty_cond_nodes.

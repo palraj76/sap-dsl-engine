@@ -456,7 +456,7 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 | `DSL_SEM_xxx` | 001-011 | Semantic issues (GROUP BY, params, aliases, MANDT) |
 | `DSL_SEC_xxx` | 001-004 | Injection defense (patterns, operators, value length) |
 | `DSL_GUARD_xxx` | 001-003 | Guardrail limits (max rows, join count) |
-| `DSL_EXEC_xxx` | 001-006 | Runtime errors (SQL failure, timeout, fallbacks) |
+| `DSL_EXEC_xxx` | 001-007 | Runtime errors (SQL failure, timeout, fallbacks). `007` = CTE union path failed, fell back to in-memory execution |
 | `DSL_DEPR_xxx` | 001-002 | Deprecated syntax (flat arrays) |
 
 ---
