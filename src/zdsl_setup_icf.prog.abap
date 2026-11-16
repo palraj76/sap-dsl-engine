@@ -113,29 +113,69 @@ FORM create_service USING    iv_parent  TYPE icfnodguid
     ENDIF.
   ENDIF.
 
-  cl_icf_tree=>insert_node(
+  " Same call form as SAP's own service registration (/IWFND/ ICF utilities)
+  cl_icf_tree=>if_icf_tree~insert_node(
     EXPORTING
-      icf_name    = lv_name
-      icfparguid  = lv_parent
-      icfdocu     = ls_docu
-      icfhandlst  = lt_handlers
-      icfactive   = 'X'
-      package     = gc_package
-      application = space
+      icf_name                  = lv_name
+      icfparguid                = lv_parent
+      icfdocu                   = ls_docu
+      icfhandlst                = lt_handlers
+      icfactive                 = 'X'
+      package                   = gc_package
+      application               = space
     IMPORTING
-      icfnodguid  = cv_guid
+      icfnodguid                = cv_guid
     CHANGING
-      transport   = lv_trkorr
+      transport                 = lv_trkorr
     EXCEPTIONS
-      OTHERS      = 1 ).
+      empty_icf_name            = 1
+      no_new_virtual_host       = 2
+      special_service_error     = 3
+      parent_not_existing       = 4
+      enqueue_error             = 5
+      node_already_existing     = 6
+      empty_docu                = 7
+      doculang_not_installed    = 8
+      security_info_error       = 9
+      user_password_error       = 10
+      password_encryption_error = 11
+      invalid_url               = 12
+      invalid_otr_concept       = 13
+      formflg401_error          = 14
+      handler_error             = 15
+      transport_error           = 16
+      tadir_error               = 17
+      package_not_found         = 18
+      wrong_application         = 19
+      not_allow_application     = 20
+      no_application            = 21
+      invalid_icfparguid        = 22
+      alt_name_invalid          = 23
+      alternate_name_exist      = 24
+      wrong_icf_name            = 25
+      no_authority              = 26
+      OTHERS                    = 27 ).
 
-  IF sy-subrc = 0 AND cv_guid IS NOT INITIAL.
+  DATA(lv_rc) = sy-subrc.
+  IF lv_rc = 0 AND cv_guid IS NOT INITIAL.
     WRITE: / |  Created { lv_name } ({ cv_guid }), transport { lv_trkorr }|.
-  ELSE.
-    WRITE: / |  ERROR creating { lv_name } (INSERT_NODE sy-subrc { sy-subrc }).|,
-           / |  Create it in SICF instead: right-click the parent → New Sub-Element.|.
-    CLEAR cv_guid.
+    RETURN.
   ENDIF.
+
+  DATA lv_reason TYPE string.
+  CASE lv_rc.
+    WHEN 4 OR 22.  lv_reason = `parent node not found`.
+    WHEN 5.        lv_reason = `node is locked by another user (enqueue)`.
+    WHEN 6.        lv_reason = `node already exists`.
+    WHEN 15.       lv_reason = `handler class not found or not active`.
+    WHEN 16 OR 17. lv_reason = `transport / TADIR entry could not be written`.
+    WHEN 18.       lv_reason = |package { gc_package } not found|.
+    WHEN 26.       lv_reason = `no authorization to maintain ICF services`.
+    WHEN OTHERS.   lv_reason = |INSERT_NODE exception { lv_rc }|.
+  ENDCASE.
+  WRITE: / |  ERROR creating { lv_name }: { lv_reason }.|,
+         / |  Create it in SICF instead: right-click the parent → New Sub-Element.|.
+  CLEAR cv_guid.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
