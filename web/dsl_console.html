@@ -287,7 +287,7 @@ table.rows td.num { text-align: right; }
         <div class="field">
           <label for="fname">File name pattern</label>
           <input id="fname" type="text" class="mono" value="{query_id}_{yyyyMMdd-HHmmss}_{status}.json" spellcheck="false">
-          <span class="hint">Tokens: {query_id} {metricId} {status} {yyyyMMdd-HHmmss}. Automatic saves go to the browser's Downloads folder.</span>
+          <span class="hint">Tokens: {query_id} {metricId} {status} {page} {yyyyMMdd-HHmmss}. Automatic saves go to the browser's Downloads folder.</span>
         </div>
       </div>
     </details>
@@ -357,6 +357,7 @@ table.rows td.num { text-align: right; }
         <div class="pane-h">
           <h2>Response</h2>
           <span class="sp"></span>
+          <button class="btn" id="btnNext" type="button" disabled title="Fetch the next page with meta.next_page_token">Next page</button>
           <button class="btn" id="btnCopy" type="button" disabled>Copy</button>
           <button class="btn" id="btnSave" type="button" disabled>Save .json</button>
         </div>
@@ -662,12 +663,20 @@ table.rows td.num { text-align: right; }
   }
 
   /* ---------- send ---------- */
-  var last = null, busy = false;
-  function send() {
+  var last = null, busy = false, page = 1, nextToken = null;
+  function send(opts) {
+    opts = opts || {};
     if (busy) return;
     var q0 = checkReq();
     if (!q0) { toast("The request is not valid JSON: " + $("reqMode").textContent); req.focus(); return; }
     var q = applyOverrides(q0);
+    if (opts.pageToken) {
+      if (typeof q.limit !== "object" || q.limit === null) q.limit = {};
+      q.limit.page_token = opts.pageToken;
+      page = opts.page;
+    } else {
+      page = 1;
+    }
     var payload = JSON.stringify(q);
     $("sent").value = JSON.stringify(q, null, 2);
     busy = true; $("btnSend").disabled = true;
@@ -708,7 +717,8 @@ table.rows td.num { text-align: right; }
       if ($("autoSave").checked) save(true); else setStep("stSave", "", "not saved");
     });
   }
-  $("btnSend").addEventListener("click", send);
+  $("btnSend").addEventListener("click", function () { send(); });
+  $("btnNext").addEventListener("click", function () { if (nextToken) send({ pageToken: nextToken, page: page + 1 }); });
   document.addEventListener("keydown", function (e) {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); send(); }
   });
@@ -725,7 +735,9 @@ table.rows td.num { text-align: right; }
     $("sAgg").textContent = d && d.aggregates && d.aggregates.length ? Number(d.aggregates[0].value).toLocaleString() : "-";
     $("sStrat").textContent = m && m.strategy_used ? m.strategy_used : "-";
     $("sTime").textContent = m ? m.execution_time_ms + " ms" : "-";
-    $("sMore").textContent = m ? (m.has_more ? "yes" : "no") : "-";
+    $("sMore").textContent = m ? (m.has_more ? "yes" : "no") + " " + DOT + " page " + page : "-";
+    nextToken = m && m.has_more && m.next_page_token ? m.next_page_token : null;
+    $("btnNext").disabled = !nextToken;
     $("resp").value = b ? JSON.stringify(b, null, 2) : (r.text || "");
     $("btnCopy").disabled = false; $("btnSave").disabled = opt.auth === true;
 
@@ -827,6 +839,7 @@ table.rows td.num { text-align: right; }
       .split("{query_id}").join(b.query_id || last.sent.query_id || "query")
       .split("{metricId}").join(b.metricId || last.sent.metricId || "")
       .split("{status}").join(status)
+      .split("{page}").join("p" + page)
       .split("{yyyyMMdd-HHmmss}").join(stamp);
     name = name.replace(/[^\w.\-]+/g, "_");
     return /\.json$/i.test(name) ? name : name + ".json";

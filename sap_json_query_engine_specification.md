@@ -619,7 +619,9 @@ Metric results are returned as **columns in `data.rows`**, keyed by the metric `
 | `TOKEN_TTL_SECONDS` | `3600` | Bearer token lifetime (§20.3) |
 | `AUDIT_RETENTION_DAYS` | `90` | Audit log retention (§13.3) |
 
-> **How pagination executes:** the database read is capped with `UP TO offset + page_size ROWS` (or `UP TO rows ROWS` when there's no `page_size`). The offset skip and the page trim happen on the application server. `next_page_token` is a base64-encoded offset.
+> **How pagination executes:** the page's offset comes from `limit.offset` or, when present, from `limit.page_token`. The database read is capped with `UP TO offset + page_size + 1 ROWS`; the one extra row is how the engine knows another page exists (`has_more = true`, `next_page_token` = base64 of the next offset). `limit.rows` is the cap across all pages: the read never goes past it, so the last page stops there. Without `page_size` the read is `UP TO rows ROWS` and there is a single page. The offset skip and the page trim happen on the application server.
+>
+> *Fixed 2026-11-16:* the read used to stop at exactly `offset + page_size` and ignored the token's offset, so `has_more` was always false and page 2 came back empty.
 
 **Guardrail enforcement in the DSL:**
 
@@ -1149,7 +1151,7 @@ Defined in `ZJSON_DSL_WHITELIST.json` or custom table `ZJSON_DSL_WL`. Note `MAND
 | Field | Type | Description |
 |-------|------|-------------|
 | `row_count` | integer | Rows in this response page. For a union with only an aggregate, `1` |
-| `total_count` | integer | Rows read before pagination when `include_summary: true`; otherwise `0` (never `null`). Capped by the `UP TO` limit, so it is not a true table-wide count |
+| `total_count` | integer | With `include_summary: true`, the rows read up to the end of this page (offset + rows on this page); otherwise `0` (never `null`). It is not a table-wide count |
 | `has_more` | boolean | `true` when more pages are available |
 | `next_page_token` | string \| null | Pass to next request `limit.page_token`; `null` on last page |
 | `execution_time_ms` | integer | Wall-clock execution time in milliseconds |

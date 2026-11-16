@@ -633,7 +633,7 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `        <div class="field">` TO rt_lines.
     APPEND `          <label for="fname">File name pattern</label>` TO rt_lines.
     APPEND `          <input id="fname" type="text" class="mono" value="{query_id}_{yyyyMMdd-HHmmss}_{status}.json" spellcheck="false">` TO rt_lines.
-    APPEND `          <span class="hint">Tokens: {query_id} {metricId} {status} {yyyyMMdd-HHmmss}. Automatic saves go to the browser's Downloads folder.</span>` TO rt_lines.
+    APPEND `          <span class="hint">Tokens: {query_id} {metricId} {status} {page} {yyyyMMdd-HHmmss}. Automatic saves go to the browser's Downloads folder.</span>` TO rt_lines.
     APPEND `        </div>` TO rt_lines.
     APPEND `      </div>` TO rt_lines.
     APPEND `    </details>` TO rt_lines.
@@ -703,6 +703,7 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `        <div class="pane-h">` TO rt_lines.
     APPEND `          <h2>Response</h2>` TO rt_lines.
     APPEND `          <span class="sp"></span>` TO rt_lines.
+    APPEND `          <button class="btn" id="btnNext" type="button" disabled title="Fetch the next page with meta.next_page_token">Next page</button>` TO rt_lines.
     APPEND `          <button class="btn" id="btnCopy" type="button" disabled>Copy</button>` TO rt_lines.
     APPEND `          <button class="btn" id="btnSave" type="button" disabled>Save .json</button>` TO rt_lines.
     APPEND `        </div>` TO rt_lines.
@@ -1008,12 +1009,20 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `  }` TO rt_lines.
     APPEND `` TO rt_lines.
     APPEND `  /* ---------- send ---------- */` TO rt_lines.
-    APPEND `  var last = null, busy = false;` TO rt_lines.
-    APPEND `  function send() {` TO rt_lines.
+    APPEND `  var last = null, busy = false, page = 1, nextToken = null;` TO rt_lines.
+    APPEND `  function send(opts) {` TO rt_lines.
+    APPEND `    opts = opts || {};` TO rt_lines.
     APPEND `    if (busy) return;` TO rt_lines.
     APPEND `    var q0 = checkReq();` TO rt_lines.
     APPEND `    if (!q0) { toast("The request is not valid JSON: " + $("reqMode").textContent); req.focus(); return; }` TO rt_lines.
     APPEND `    var q = applyOverrides(q0);` TO rt_lines.
+    APPEND `    if (opts.pageToken) {` TO rt_lines.
+    APPEND `      if (typeof q.limit !== "object" || q.limit === null) q.limit = {};` TO rt_lines.
+    APPEND `      q.limit.page_token = opts.pageToken;` TO rt_lines.
+    APPEND `      page = opts.page;` TO rt_lines.
+    APPEND `    } else {` TO rt_lines.
+    APPEND `      page = 1;` TO rt_lines.
+    APPEND `    }` TO rt_lines.
     APPEND `    var payload = JSON.stringify(q);` TO rt_lines.
     APPEND `    $("sent").value = JSON.stringify(q, null, 2);` TO rt_lines.
     APPEND `    busy = true; $("btnSend").disabled = true;` TO rt_lines.
@@ -1054,7 +1063,8 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `      if ($("autoSave").checked) save(true); else setStep("stSave", "", "not saved");` TO rt_lines.
     APPEND `    });` TO rt_lines.
     APPEND `  }` TO rt_lines.
-    APPEND `  $("btnSend").addEventListener("click", send);` TO rt_lines.
+    APPEND `  $("btnSend").addEventListener("click", function () { send(); });` TO rt_lines.
+    APPEND `  $("btnNext").addEventListener("click", function () { if (nextToken) send({ pageToken: nextToken, page: page + 1 }); });` TO rt_lines.
     APPEND `  document.addEventListener("keydown", function (e) {` TO rt_lines.
     APPEND `    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); send(); }` TO rt_lines.
     APPEND `  });` TO rt_lines.
@@ -1071,7 +1081,9 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `    $("sAgg").textContent = d && d.aggregates && d.aggregates.length ? Number(d.aggregates[0].value).toLocaleString() : "-";` TO rt_lines.
     APPEND `    $("sStrat").textContent = m && m.strategy_used ? m.strategy_used : "-";` TO rt_lines.
     APPEND `    $("sTime").textContent = m ? m.execution_time_ms + " ms" : "-";` TO rt_lines.
-    APPEND `    $("sMore").textContent = m ? (m.has_more ? "yes" : "no") : "-";` TO rt_lines.
+    APPEND `    $("sMore").textContent = m ? (m.has_more ? "yes" : "no") + " " + DOT + " page " + page : "-";` TO rt_lines.
+    APPEND `    nextToken = m && m.has_more && m.next_page_token ? m.next_page_token : null;` TO rt_lines.
+    APPEND `    $("btnNext").disabled = !nextToken;` TO rt_lines.
     APPEND `    $("resp").value = b ? JSON.stringify(b, null, 2) : (r.text || "");` TO rt_lines.
     APPEND `    $("btnCopy").disabled = false; $("btnSave").disabled = opt.auth === true;` TO rt_lines.
     APPEND `` TO rt_lines.
@@ -1173,6 +1185,7 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `      .split("{query_id}").join(b.query_id || last.sent.query_id || "query")` TO rt_lines.
     APPEND `      .split("{metricId}").join(b.metricId || last.sent.metricId || "")` TO rt_lines.
     APPEND `      .split("{status}").join(status)` TO rt_lines.
+    APPEND `      .split("{page}").join("p" + page)` TO rt_lines.
     APPEND `      .split("{yyyyMMdd-HHmmss}").join(stamp);` TO rt_lines.
     APPEND `    name = name.replace(/[^\w.\-]+/g, "_");` TO rt_lines.
     APPEND `    return /\.json$/i.test(name) ? name : name + ".json";` TO rt_lines.

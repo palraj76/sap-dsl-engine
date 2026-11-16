@@ -175,15 +175,32 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
           RETURN.
         ENDIF.
 
+        " Database read limit for pagination. The builder only knows
+        " limit.offset; the offset of a page token is known only here. Read
+        " up to the end of this page plus ONE extra row - that row is how
+        " APPLY_PAGINATION knows another page exists (has_more / token).
+        " limit.rows stays the cap across all pages.
+        DATA(ls_exec_sql) = is_sql.
+        DATA(lv_page_off) = is_query-limit-offset.
+        IF is_query-limit-page_token IS NOT INITIAL.
+          lv_page_off = decode_page_token( is_query-limit-page_token ).
+        ENDIF.
+        IF is_query-limit-page_size > 0.
+          ls_exec_sql-row_limit = lv_page_off + is_query-limit-page_size + 1.
+          IF is_query-limit-rows > 0 AND ls_exec_sql-row_limit > is_query-limit-rows.
+            ls_exec_sql-row_limit = is_query-limit-rows.
+          ENDIF.
+        ENDIF.
+
         CASE is_sql-strategy.
           WHEN 'OPEN_SQL'.
             execute_open_sql(
-              EXPORTING is_query = is_query is_sql = is_sql
+              EXPORTING is_query = is_query is_sql = ls_exec_sql
               IMPORTING et_rows = lt_rows ev_dbcnt = lv_dbcnt ).
           WHEN OTHERS.
             " NATIVE_SQL and AMDP — fallback to Open SQL for now
             execute_open_sql(
-              EXPORTING is_query = is_query is_sql = is_sql
+              EXPORTING is_query = is_query is_sql = ls_exec_sql
               IMPORTING et_rows = lt_rows ev_dbcnt = lv_dbcnt ).
         ENDCASE.
 
@@ -253,15 +270,20 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
       CHANGING ct_rows = rs_response-rows
                cs_meta = rs_response-meta ).
 
-    " Include summary total if requested
+    " Include summary total if requested: rows read up to the end of this
+    " page (the extra look-ahead row is not counted)
     IF is_query-output-include_summary = abap_true.
       rs_response-meta-total_count = lv_dbcnt.
+      IF is_query-limit-page_size > 0
+         AND lv_dbcnt > lv_page_off + is_query-limit-page_size.
+        rs_response-meta-total_count = lv_page_off + is_query-limit-page_size.
+      ENDIF.
     ENDIF.
 
     " Populate debug block if caller asked for it
     IF is_query-output-debug = abap_true.
       populate_debug(
-        EXPORTING is_query = is_query is_sql = is_sql
+        EXPORTING is_query = is_query is_sql = ls_exec_sql
         CHANGING  cs_response = rs_response ).
     ENDIF.
 
