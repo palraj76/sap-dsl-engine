@@ -1099,9 +1099,16 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `      (b.errors || []).forEach(function (e) { msgs.push(["err", e]); });` TO rt_lines.
     APPEND `      (b.warnings || []).forEach(function (w) { msgs.push(["warn", w]); });` TO rt_lines.
     APPEND `    } else {` TO rt_lines.
-    APPEND `      msgs.push(["err", { code: r.status ? "HTTP " + r.status : "NO_ANSWER", severity: "ERROR",` TO rt_lines.
-    APPEND `        message: r.status ? "SAP answered with something that is not JSON. If it is a logon page, your session has expired: reload this page."` TO rt_lines.
-    APPEND `                          : r.text, hint: r.status ? String(r.text || "").slice(0, 600) : null }]);` TO rt_lines.
+    APPEND `      var why;` TO rt_lines.
+    APPEND `      if (!r.status) why = r.text;` TO rt_lines.
+    APPEND `      else if (r.status >= 500) why = "SAP stopped with a runtime error (short dump) before it could answer. " +` TO rt_lines.
+    APPEND `        "Open ST22, filter on user " + CFG.user + " and today's date, and note the runtime error name and the trigger location.";` TO rt_lines.
+    APPEND `      else if (r.status === 401 || r.status === 403 || /logon|login|anmeld/i.test(r.text || ""))` TO rt_lines.
+    APPEND `        why = "SAP answered with a logon page. Your session has probably expired: reload this page.";` TO rt_lines.
+    APPEND `      else why = "SAP answered with something that is not JSON (HTTP " + r.status + ").";` TO rt_lines.
+    APPEND `      msgs.push(["err", { code: r.status ? "HTTP " + r.status : "NO_ANSWER", severity: "ERROR", message: why,` TO rt_lines.
+    APPEND `        hint: r.status ? String(r.text || "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ")` TO rt_lines.
+    APPEND `          .replace(/\s+/g, " ").trim().slice(0, 600) : null }]);` TO rt_lines.
     APPEND `    }` TO rt_lines.
     APPEND `    var cm = $("cMsgs"); cm.textContent = msgs.length;` TO rt_lines.
     APPEND `    cm.className = "cnt" + (msgs.some(function (x) { return x[0] === "err"; }) ? " err" : msgs.length ? " warn" : "");` TO rt_lines.

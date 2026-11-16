@@ -753,9 +753,16 @@ table.rows td.num { text-align: right; }
       (b.errors || []).forEach(function (e) { msgs.push(["err", e]); });
       (b.warnings || []).forEach(function (w) { msgs.push(["warn", w]); });
     } else {
-      msgs.push(["err", { code: r.status ? "HTTP " + r.status : "NO_ANSWER", severity: "ERROR",
-        message: r.status ? "SAP answered with something that is not JSON. If it is a logon page, your session has expired: reload this page."
-                          : r.text, hint: r.status ? String(r.text || "").slice(0, 600) : null }]);
+      var why;
+      if (!r.status) why = r.text;
+      else if (r.status >= 500) why = "SAP stopped with a runtime error (short dump) before it could answer. " +
+        "Open ST22, filter on user " + CFG.user + " and today's date, and note the runtime error name and the trigger location.";
+      else if (r.status === 401 || r.status === 403 || /logon|login|anmeld/i.test(r.text || ""))
+        why = "SAP answered with a logon page. Your session has probably expired: reload this page.";
+      else why = "SAP answered with something that is not JSON (HTTP " + r.status + ").";
+      msgs.push(["err", { code: r.status ? "HTTP " + r.status : "NO_ANSWER", severity: "ERROR", message: why,
+        hint: r.status ? String(r.text || "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ").trim().slice(0, 600) : null }]);
     }
     var cm = $("cMsgs"); cm.textContent = msgs.length;
     cm.className = "cnt" + (msgs.some(function (x) { return x[0] === "err"; }) ? " err" : msgs.length ? " warn" : "");
