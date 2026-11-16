@@ -209,6 +209,11 @@ qualifying row is how a working system dumps with `TSV_TNEW_PAGE_ALLOC_FAILED`.
   breaks `limit.rows`.
 - Reset the first-field flag **per row** in `SERIALIZE_ROWS`, or the output JSON
   grows stray commas.
+- **Literal braces in string templates:** write `\{` directly inside `|...|`, or
+  build JSON with backtick literals (`` `{"offset":` && |{ n }| && `}` ``). Never
+  `|{ '\{' }|` — that embeds the text literal `'\{'` (no escape inside quotes) and
+  produces a literal backslash. It broke every page token: pages always restarted
+  at offset 0 and the console's all-pages loop never ended.
 
 ---
 
