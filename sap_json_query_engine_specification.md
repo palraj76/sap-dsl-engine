@@ -1,5 +1,11 @@
 # SAP JSON Query Engine (DSL) – Functional & Technical Specification
 
+**Spec version:** 1.6 | **Last updated:** 2026-11-16 | **DSL payload versions accepted:** `"1.2"`, `"1.3"`
+
+> **How to read this document.** Sections describe the engine *as implemented* in `src/`. Where the original design defined a rule or error code that the code does not (yet) enforce, it is kept and explicitly marked **"Not enforced in v1.6"** or **"Reserved — not emitted"** so callers do not rely on it.
+>
+> **Changes in v1.6 (vs v1.5, 2026-03-24):** UNION queries (§5.12) with runtime CTE / in-memory strategy selection (§8); subqueries in `IN` / `NOT IN` promoted from Phase 3 to supported (§5.4.1); `output.debug` diagnostics (§5.11, §11.4); plain-English `hint` enrichment on execution errors (§10.1); metadata pass-through fields (§3); `DSL_SEM_007` (MANDT-required-in-JOIN) removed; new codes `DSL_SEM_012`, `DSL_SEM_013`, `DSL_EXEC_007`, `DSL_ENTITY_001`, `DSL_AUTH_001`–`005`; status of every spec'd-but-unimplemented rule clarified.
+
 ## 1. Vision
 
 A **JSON-driven query and analytics DSL for SAP** that compiles into ABAP Open SQL (or HANA SQL), enabling dynamic data extraction, aggregation, and insight generation without writing custom ABAP per use case.
@@ -86,7 +92,7 @@ Our application maintains a client registry keyed by a unique client identifier 
 
 **Response handling:** SAP returns raw JSON. Our Java application receives it directly and processes it in the application pipeline. No transformation layer is needed between SAP and our application.
 
-**Client isolation:** Each client's SAP has its own `ZJSON_DSL_WL` whitelist, its own `ZJSON_DSL_CONFIG` guardrails, and its own `ZJSON_DSL_CLIENTS` credentials table. Installations are fully isolated — a misconfiguration at one client cannot affect another.
+**Client isolation:** Each client's SAP has its own `ZJSON_DSL_WL` whitelist, its own `ZJSON_DSL_CONFIG` guardrails, and its own `ZJSON_DSL_CLNT` credentials table. Installations are fully isolated — a misconfiguration at one client cannot affect another.
 
 ---
 
@@ -94,9 +100,11 @@ Our application maintains a client registry keyed by a unique client identifier 
 
 ### ✅ Must Support (Phase 1–2)
 - Multi-table SELECT with alias-qualified fields
-- JOINs (INNER, LEFT) with multi-condition AND/OR logic including MANDT
+- JOINs (INNER, LEFT) with multi-condition AND/OR logic (MANDT conditions optional — see §5.2)
 - WHERE conditions with logical grouping (AND/OR/nested expression trees)
-- Aggregations (COUNT, SUM, DISTINCT)
+- Subqueries in `IN` / `NOT IN` filter conditions, one level deep (§5.4.1) — *built in v1.6*
+- UNION / UNION ALL of single-source branches (§5.12) — *built in v1.6*
+- Aggregations (COUNT, COUNT DISTINCT, SUM, AVG, MIN, MAX)
 - GROUP BY with strict enforcement: non-aggregate selects must appear in GROUP BY
 - Row limits with offset-based pagination (AMDP recommended for large datasets)
 - ORDER BY mandatory when pagination is active
@@ -116,30 +124,7 @@ Each item below includes a strawman JSON syntax to prevent scope ambiguity at th
 ]
 ```
 
-**Subqueries — full DSL recursion**
-
-Subqueries reuse the full DSL structure for consistency:
-```json
-"filters": {
-  "logic": "AND",
-  "conditions": [
-    {
-      "field": "u.BNAME",
-      "op": "IN",
-      "subquery": {
-        "sources": [{ "table": "AGR_USERS", "alias": "su" }],
-        "select": [{ "field": "su.UNAME", "alias": "uname", "type": "STRING" }],
-        "filters": {
-          "logic": "AND",
-          "conditions": [
-            { "field": "su.AGR_NAME", "op": "=", "value": "Z_ADMIN" }
-          ]
-        }
-      }
-    }
-  ]
-}
-```
+**Subqueries** — ✅ promoted to supported in v1.6 for `IN` / `NOT IN`. See §5.4.1.
 
 **Calculated metrics**
 ```json
@@ -154,23 +139,27 @@ Subqueries reuse the full DSL structure for consistency:
 - Arbitrary SQL functions
 - Window functions
 - Deep nested subqueries (beyond one level)
+- Subqueries in `EXISTS`, scalar comparisons, or the SELECT list
 - Cross-database joins
 - Dynamic schema discovery at runtime
+- SQL expressions in the engine: `SUM(CASE ...)`, date arithmetic, percentages. The caller computes these from raw counts / values (this is how the GRC metric catalog is built — see `metrics/README.md`)
 
 ---
 
-## 3. JSON DSL Structure (v1.2)
+## 3. JSON DSL Structure (v1.3)
 
-Two query modes are supported. In **entity mode** the caller uses a logical name; in **raw mode** the caller supplies `sources` and `joins` directly. The engine detects the mode from the presence of the `entity` key.
+Three query modes are supported. In **entity mode** the caller uses a logical name; in **raw mode** the caller supplies `sources` and `joins` directly; in **union mode** the caller supplies `union.branches`. The engine detects the mode from which key is present.
 
 ```json
 {
   "version": "1.3",
+  "query_id": "",
 
   "entity": "user_access",
 
   "sources": [],
   "joins": [],
+  "union": {},
   "select": [],
   "filters": {},
   "group_by": [],
@@ -180,11 +169,19 @@ Two query modes are supported. In **entity mode** the caller uses a logical name
   "limit": {},
 
   "params": {},
-  "output": {}
+  "output": {},
+
+  "metricName": "", "metricId": "", "priority": "", "description": "", "module": ""
 }
 ```
 
-> `entity` and `sources`/`joins` are mutually exclusive. The validator raises `DSL_PARSE_005` if both are present.
+> - `entity` and `sources`/`joins` are mutually exclusive → `DSL_PARSE_005`.
+> - `union` is mutually exclusive with `entity`, `sources` and `joins` → `DSL_PARSE_005`.
+> - Exactly one of `entity`, `sources`, `union` is required → `DSL_PARSE_003`.
+> - `select` is mandatory except in union mode (where each branch carries its own `select`).
+> - Any top-level key not listed above → `DSL_PARSE_004`.
+
+**Metadata pass-through fields** (`metricName`, `metricId`, `priority`, `description`, `module`) are accepted for tracing and logging. They have no effect on the SQL. `metricName`, `metricId`, `priority` and `module` are echoed in the response; `description` is accepted but not echoed. If `query_id` is absent, `metricId` is used as the `query_id`.
 
 ---
 
@@ -258,6 +255,8 @@ Entities are defined in a configuration table `ZJSON_DSL_ENTITY` or a JSON confi
 
 In entity mode, `select` entries reference the entity's canonical `alias` names rather than raw `table.FIELD` paths. The builder resolves them to physical fields before SQL generation.
 
+> ⚠️ **As implemented in v1.6, only `select` aliases are resolved.** `filters`, `group_by` and `order_by` are *not* mapped, so the bare entity aliases in the example below (`user_type`, `valid_from`, `user`) are rejected with `DSL_SEM_011`. Until resolution is extended, use physical alias-qualified fields from the entity definition in those sections (`u.USTYP`, `ru.FROM_DAT`, `u.BNAME`). The entity is loaded from `ZJSON_DSL_ENTITY` (`entity_json`, `active = X`); unknown or inactive entities return `DSL_ENTITY_001`. The JSON-config-file option (`ZJSON_DSL_ENTITIES.json`) was not built.
+
 ```json
 {
   "version": "1.2",
@@ -308,9 +307,11 @@ Used in raw mode only. Raises `DSL_PARSE_005` if present alongside `entity`.
 
 ### 5.2 Joins
 
-The `on` block uses a **structured condition tree** supporting AND/OR logic. The flat array syntax from v1.0/v1.1 is deprecated (warning `DSL_DEPR_002`) and will be removed in v2.0.
+The `on` block uses a **structured condition tree** supporting AND/OR logic. The flat array syntax from v1.0/v1.1 is still accepted and treated as an implicit `AND` node. *Not enforced in v1.6:* the `DSL_DEPR_002` warning is not emitted.
 
-**MANDT must always be included** in join conditions for cross-client-safe queries. The validator raises `DSL_SEM_007` if a join between two client-dependent tables omits MANDT.
+**MANDT is optional in join conditions.** ABAP Open SQL applies client handling automatically, and the builder **strips** any `ON` leaf that references `MANDT` before generating SQL. Callers may include MANDT conditions for readability; they have no effect. The v1.5 rule `DSL_SEM_007` (MANDT required) was **removed** because it rejected legitimate GRC (GRAC) queries — do not re-introduce it.
+
+Every join must name its type (`"inner"` or `"left"`, case-insensitive) and a `target` with `table` and `alias`.
 
 ```json
 "joins": [
@@ -356,14 +357,15 @@ The `on` block uses a **structured condition tree** supporting AND/OR logic. The
 
 **Rules:**
 - Avoid raw SQL strings in any condition field
-- Both tables in any condition must be whitelisted
-- MANDT condition is mandatory for client-dependent table joins
+- Both tables in any condition must be whitelisted (STRICT mode)
+- ON leaves are field-to-field (`left` / `right`). The generated SQL uses tilde notation (`u~BNAME = ru~UNAME`) and `AS` aliases in the FROM / JOIN clause
+- Field-vs-field comparison across incompatible DDIC types (e.g. DATS CHAR-8 vs DEC15 timestamp) is rejected by ABAP at runtime. Return both values and compare in the caller
 
 ---
 
 ### 5.3 Select
 
-Fields carry an optional `type` annotation to drive type-safe ABAP variable declarations. When omitted, the engine defaults to `STRING` and emits warning `DSL_SEM_006`.
+Fields carry an optional `type` annotation. **As implemented in v1.6 the annotation is informational:** the executor builds the result structure from the **actual DDIC field types via RTTI** (falling back to `CHAR255` if the DDIC lookup fails), so results are correct whatever `type` is sent. All row values are serialized as JSON strings. *Not enforced in v1.6:* no `DSL_SEM_006` warning when `type` is omitted or unknown.
 
 ```json
 "select": [
@@ -392,7 +394,7 @@ Fields carry an optional `type` annotation to drive type-safe ABAP variable decl
 **AMOUNT and QUANTITY rules:**
 - `currency_field` / `unit_field` must point to a field within the same `sources` / `joins` scope
 - The referenced companion field must also appear in `select` for the output to carry the currency or unit
-- Violation raises `DSL_SEM_008`
+- *Not enforced in v1.6:* `DSL_SEM_008` is not raised; `currency_field` / `unit_field` are parsed but not validated
 
 **Metric / Select separation — strictly enforced:**
 - Fields in `select` must be non-aggregate
@@ -402,7 +404,7 @@ Fields carry an optional `type` annotation to drive type-safe ABAP variable decl
 
 **Field qualification — strictly enforced:**
 
-Every `field` reference anywhere in the DSL (`select`, `filters`, `group_by`, `order_by`, join `left`/`right`) **must** be qualified as `alias.FIELDNAME`. Bare field names without a table alias are rejected with `DSL_SEM_011`.
+Every `field` reference anywhere in the DSL **must** be qualified as `alias.FIELDNAME`. Bare field names without a table alias are rejected with `DSL_SEM_011`. As implemented, `DSL_SEM_011` is checked on `select`, `group_by` and filter leaves; `select` fields are additionally pattern-checked by `DSL_SEC_002`.
 
 ```json
 ✅ Accepted:  { "field": "u.BNAME" }
@@ -436,12 +438,12 @@ Filters are a **condition tree** (not a flat array), enabling full AND/OR/nested
 }
 ```
 
-Generated SQL:
+Generated SQL (params are substituted as escaped, single-quoted literals — see §5.10):
 ```sql
-WHERE u.USTYP IN ('A','B')
-  AND ru.FROM_DAT <= :asOfDate
-  AND ru.TO_DAT   >= :asOfDate
-  AND ( u.CLASS = 'X' OR u.CLASS = 'Y' )
+WHERE u~USTYP IN ( 'A', 'B' )
+  AND ru~FROM_DAT <= '20260123'
+  AND ru~TO_DAT   >= '20260123'
+  AND ( u~CLASS = 'X' OR u~CLASS = 'Y' )
 ```
 
 **Condition tree schema:**
@@ -455,12 +457,23 @@ WHERE u.USTYP IN ('A','B')
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `field` | Yes | Table-aliased field, e.g. `u.USTYP` |
-| `op` | Yes | Operator from the allowed set |
-| `value` | One of | Literal value or array (for IN / NOT IN) |
-| `param` | One of | Key from `params` block; bound at execution time |
+| `field` | Yes | Table-aliased field, e.g. `u.USTYP`. If absent but `left` is set, `left` is used as the field (lenient parsing) |
+| `op` | Yes | Operator from the allowed set (case-insensitive) |
+| `value` | One of | Literal value, or array for `IN` / `NOT IN` / `BETWEEN`. Each string ≤ 500 chars (`DSL_SEC_004`) |
+| `param` | One of | Key from `params` block. Scalar comparison operators only |
+| `subquery` | One of | Nested DSL query; `IN` / `NOT IN` only (§5.4.1) |
 
-**Supported operators:** `=`, `!=`, `>`, `<`, `>=`, `<=`, `IN`, `NOT IN`, `IS NULL`, `IS NOT NULL`, `BETWEEN`
+**Supported operators:**
+
+| Operator | Value form | Notes |
+|----------|-----------|-------|
+| `=` `>` `<` `>=` `<=` | scalar `value` or `param` | |
+| `!=` | scalar `value` or `param` | ⚠️ Passes validation but **is rejected by ABAP Open SQL on older kernels** (runtime `DSL_EXEC_001`). Use `{"op": "NOT IN", "value": ["X"]}` instead — universally accepted, and used by every GRC metric |
+| `IN` / `NOT IN` | array `value`, or `subquery` | Values emitted comma-separated: `IN ( 'A', 'B' )`. A scalar `value` is treated as a one-element list. `param` is not supported |
+| `BETWEEN` | array `value` of exactly 2 | `param` is not supported |
+| `IS NULL` / `IS NOT NULL` | none | See NULL rules below |
+
+Any other operator (including `<>`, `LIKE`) is rejected with `DSL_SEC_003`.
 
 **NULL handling rules:**
 
@@ -476,12 +489,41 @@ WHERE u.USTYP IN ('A','B')
 | Scenario | SAP Reality | Builder Action |
 |----------|-------------|----------------|
 | `IS NULL` on a `NOT NULL` DB column | Most SAP tables define all columns as `NOT NULL` with initial values (`' '`, `'00000000'`, `0`). A true SQL NULL is rare | Emit the SQL NULL check as written; the developer is responsible for knowing whether the column can be NULL |
-| Initial value vs NULL | SAP stores empty strings as `' '` (space), not NULL. `IS NULL` will not match a space-padded field | Add a hint in `DSL_EXEC_006` warning if an initial-value-type field (STRING/DATE) is used with `IS NULL` |
+| Initial value vs NULL | SAP stores empty strings as `' '` (space), not NULL. `IS NULL` will not match a space-padded field | *Not enforced in v1.6:* the planned `DSL_EXEC_006` warning is not emitted |
 | `IS NULL` in a JOIN condition | Valid syntax but unusual in SAP joins | Permitted; no special restriction |
 
 > ⚠️ In SAP, using `IS NULL` on character fields rarely produces the expected result. The initial value `' '` is not NULL. Consider using `= ' '` (space) or `= '00000000'` for date fields instead.
 
 > **Backward compatibility:** v1.0/v1.1 flat filter arrays are accepted in v1.2 and treated as an implicit top-level `AND` node. Deprecation warning `DSL_DEPR_001` is emitted. Support removed in v2.0.
+
+#### 5.4.1 Subqueries in IN / NOT IN (v1.6)
+
+A filter leaf with `op` `IN` or `NOT IN` may carry a `subquery` instead of a `value` array. The subquery is a full DSL query object, parsed and built recursively by the same parser and builder. `version` may be omitted inside the subquery (`"1.3"` is injected).
+
+```json
+{
+  "field": "u.BNAME",
+  "op": "NOT IN",
+  "subquery": {
+    "sources": [{ "table": "AGR_USERS", "alias": "su" }],
+    "select": [{ "field": "su.UNAME", "alias": "uname" }],
+    "filters": {
+      "logic": "AND",
+      "conditions": [{ "field": "su.AGR_NAME", "op": "=", "value": "Z_ADMIN" }]
+    }
+  }
+}
+```
+
+Generated: `u~BNAME NOT IN ( SELECT su~UNAME FROM AGR_USERS AS su WHERE su~AGR_NAME = 'Z_ADMIN' )`
+
+**Rules:**
+- `select` must contain exactly one field (SQL requirement; not validated — a wrong column count fails at runtime with `DSL_EXEC_001`)
+- The subquery may use `sources`, `joins`, `filters` and `group_by`. `order_by`, `limit`, `having` and `output` are ignored
+- `params` inside a subquery are resolved from the subquery's own `params` block, not the outer one
+- One level only. A subquery that fails to parse produces SQL that fails at execution (`DSL_EXEC_001`); it is not reported as a parse error
+- Any subquery in `filters` switches the whole statement to new Open SQL syntax (see §8.3)
+- Tables inside a subquery are not whitelist-checked in v1.6 — keep this in mind for STRICT-mode client systems
 
 ---
 
@@ -497,7 +539,11 @@ The validator strictly enforces: every field in `select` that is not a metric al
 
 ### 5.6 Metrics
 
-> **COUNT DISTINCT version gate:** `count_distinct` requires NetWeaver 7.40 SP08+ (ABAP release 740). On older systems, the engine falls back to: `SELECT COUNT(*) FROM ( SELECT DISTINCT field FROM table )`. The engine checks `sy-saprl` at startup and emits warning `DSL_EXEC_003` when the fallback is active.
+> **COUNT DISTINCT version gate:** `count_distinct` requires NetWeaver 7.40 SP08+ (ABAP release 740). *As implemented in v1.6:* when `sy-saprl < 740` the engine sets `meta.count_distinct_fallback = true`, but the alternative SQL is **not** generated and `DSL_EXEC_003` is not emitted. On a pre-7.40 system, treat `count_distinct` as unsupported.
+
+> ⚠️ **`min` / `max` / `sum` / `avg` on DATS or CHAR fields throw a type error on some kernels** (`DSL_EXEC_001`, with a type-mismatch hint). For "latest date" or "earliest date" style metrics, return the raw rows and compute in the caller.
+
+Metric results are returned as **columns in `data.rows`**, keyed by the metric `alias`. The `data.aggregates` array is only filled for UNION queries (see §11.2).
 
 ```json
 "metrics": [
@@ -519,9 +565,11 @@ The validator strictly enforces: every field in `select` that is not a metric al
 ```
 
 **Rules:**
-- `metric` must reference an alias defined in the `metrics` array
-- Operators follow the same allowed set as filters
+- `metric` must reference an alias defined in the `metrics` array (`DSL_SEM_001`)
 - Validator raises `DSL_SEM_002` if `group_by` is absent when `having` is present
+- The alias is replaced by its aggregate expression (`COUNT( DISTINCT ru~AGR_NAME ) > 5`)
+- `value` is inserted **unquoted** — send a numeric value
+- *Not enforced in v1.6:* the `having` operator is not checked against the allowed set. Stick to `=`, `>`, `<`, `>=`, `<=`
 
 ---
 
@@ -562,10 +610,16 @@ The validator strictly enforces: every field in `select` that is not a metric al
 | Config Key | Default | Description |
 |------------|---------|-------------|
 | `MAX_ROWS_ALLOWED` | `10000` | Hard cap on `limit.rows`. Any request exceeding this is rejected with `DSL_GUARD_001` before execution |
-| `MAX_TIMEOUT_SEC` | `30` | Maximum wall-clock seconds for SQL execution. Exceeded queries are killed and return `DSL_EXEC_002` |
+| `MAX_TIMEOUT_SEC` | `30` | *Not enforced in v1.6* — seeded only. No engine-side timeout; the ICF / work-process timeout applies. `DSL_EXEC_002` is not emitted |
 | `WARN_ROWS_THRESHOLD` | `5000` | Rows above this threshold emit warning `DSL_GUARD_002` (large result set) |
 | `WARN_JOINS_THRESHOLD` | `3` | Queries with more than this many joins emit warning `DSL_GUARD_003` |
-| `OFFSET_LARGE_TABLE_ROWS` | `100000` | Estimated table size above which `DSL_EXEC_005` is emitted for offset pagination in Open SQL mode |
+| `OFFSET_LARGE_TABLE_ROWS` | `100000` | *Not enforced in v1.6* — seeded only. `DSL_EXEC_005` is not emitted |
+| `CTE_UNION_MODE` | `AUTO` | UNION strategy override: `AUTO` (probe the DB), `FORCE_ON`, `FORCE_OFF`. See §8.2 |
+| `WHITELIST_MODE` | `STRICT` | `STRICT` or `OPEN`. See §22. `ZDSL_SEED_CONFIG` seeds `OPEN` for our dev/test system only |
+| `TOKEN_TTL_SECONDS` | `3600` | Bearer token lifetime (§20.3) |
+| `AUDIT_RETENTION_DAYS` | `90` | Audit log retention (§13.3) |
+
+> **How pagination executes:** the database read is capped with `UP TO offset + page_size ROWS` (or `UP TO rows ROWS` when there's no `page_size`). The offset skip and the page trim happen on the application server. `next_page_token` is a base64-encoded offset.
 
 **Guardrail enforcement in the DSL:**
 
@@ -586,7 +640,7 @@ If `MAX_ROWS_ALLOWED` is `10000`, the above is rejected immediately with:
 }
 ```
 
-The caller cannot override guardrails. Only a caller with `ZDSL_ADMIN` role can request a temporary config override — and it is logged to `ZJSON_DSL_AUDIT`.
+The caller cannot override guardrails. *Not built in v1.6:* the planned `ZDSL_ADMIN` temporary override does not exist. Guardrails are changed only by maintaining `ZJSON_DSL_CONFIG`.
 
 > ⚠️ **Offset pagination performance warning:** Offset pagination in Open SQL mode is implemented via client-side row skipping. **Not recommended for tables exceeding `OFFSET_LARGE_TABLE_ROWS`** — the engine fetches all rows up to `offset + page_size` and discards the skipped portion. For large datasets, use AMDP mode (Option 3) with native `LIMIT n OFFSET m`.
 
@@ -602,7 +656,7 @@ The caller cannot override guardrails. Only a caller with `ZDSL_ADMIN` role can 
 }
 ```
 
-Params are bound to filter conditions that use `"param": "<key>"`. The engine applies type-coercion based on the target field's `type` annotation before binding.
+Params are bound to filter conditions that use `"param": "<key>"`. **As implemented,** the value is substituted into the WHERE clause as a single-quoted literal, with embedded `'` escaped as `''`. Injection safety comes from that escaping plus the Phase C checks (§9.4), not from host-variable binding. There is no type coercion: send values in the field's internal SAP format (DATS `"YYYYMMDD"`, DEC15 timestamp `"YYYYMMDDhhmmss"`, NUMC with leading zeros). In union mode, each branch has its own `params` block.
 
 ---
 
@@ -612,9 +666,68 @@ Params are bound to filter conditions that use `"param": "<key>"`. The engine ap
 "output": {
   "include_rows": true,
   "include_aggregates": true,
-  "include_summary": false
+  "include_summary": false,
+  "debug": false
 }
 ```
+
+| Field | Default | Effect (as implemented in v1.6) |
+|-------|---------|---------------------------------|
+| `include_rows` | `true` | **UNION queries only:** `false` suppresses `data.rows`, and it is one of the conditions for the `CTE_UNION` path (§8.2). Non-union queries always return rows |
+| `include_aggregates` | `true` | **UNION queries only:** controls whether the union `COUNT(*)` appears in `data.aggregates`. Non-union metric values always come back as row columns |
+| `include_summary` | `false` | `true` fills `meta.total_count` with the number of rows read before pagination. Otherwise `total_count` is `0` |
+| `debug` | `false` | `true` adds a `debug` block to the response: the generated SQL, the strategy, and an **unfiltered** `COUNT(*)` per source table, join target and union-branch table. Built to answer "why did this return zero rows?" in one round trip. Costs one extra `COUNT(*)` per table — do not leave on in production polling |
+
+---
+
+### 5.12 Union (v1.6)
+
+A top-level `union` replaces `entity` / `sources` / `joins` (mutually exclusive → `DSL_PARSE_005`). Top-level `select` is not required.
+
+```json
+{
+  "version": "1.3",
+  "query_id": "M01-total-sod-conflicts",
+  "union": {
+    "distinct": true,
+    "branches": [
+      {
+        "sources": [{ "table": "GRACUSERACTVL", "alias": "v" }],
+        "select": [
+          { "field": "v.USERID", "alias": "user_id" },
+          { "field": "v.RISKID", "alias": "risk_id" }
+        ]
+      },
+      {
+        "sources": [{ "table": "GRACUSERPRMVL", "alias": "v" }],
+        "select": [
+          { "field": "v.USERID", "alias": "user_id" },
+          { "field": "v.RISKID", "alias": "risk_id" }
+        ],
+        "filters": { "logic": "AND", "conditions": [ ... ] },
+        "params": { }
+      }
+    ]
+  },
+  "metrics": [{ "type": "count", "field": "*", "alias": "total_conflicts" }],
+  "output": { "include_rows": false, "include_aggregates": true }
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `union.distinct` | No (default `true`) | `true` = `UNION DISTINCT` (duplicate rows removed), `false` = `UNION ALL` |
+| `union.branches` | Yes (≥ 2) | Each branch has `sources` (one table), `select`, and optional `filters` and `params` |
+
+**Rules:**
+- At least 2 branches, each with at least one source and one select field (`DSL_SEM_012`)
+- All branches must have the same number of select columns (`DSL_SEM_013`). Each branch's rows are keyed by **that branch's own** select aliases, and DISTINCT de-duplication compares values by position. **Use identical aliases in every branch**, or the rows array will mix key names
+- **Branches are single-source.** Only the first `sources` entry is used; `joins` are not supported inside a branch. Alias prefixes are stripped (`v.USERID` becomes `USERID`) because there is nothing to disambiguate
+- The only top-level aggregate supported is a single `{"type": "count", "field": "*"}` with no top-level `select` / `group_by`. That is the "count-only" form and the only form eligible for `CTE_UNION`
+- ⚠️ **`limit` is not applied in union mode.** On the in-memory path every qualifying row of every branch is read onto the application server and all of them are returned. `order_by`, `having` and pagination are not applied either. Keep branch filters tight. On large GRC tables an unfiltered in-memory union risks `TSV_TNEW_PAGE_ALLOC_FAILED`
+- Both rows and the count can be returned in one call (`include_rows: true` + `include_aggregates: true`). That forces the in-memory path
+
+How the engine chooses between `CTE_UNION` and `INMEMORY_UNION` is described in §8.2.
 
 ---
 
@@ -632,6 +745,8 @@ Params are bound to filter conditions that use `"param": "<key>"`. The engine ap
 | `having` | `HAVING` | Generated after GROUP BY |
 | `limit.rows` | `UP TO n ROWS` | Combined with client-side offset for pagination |
 | `order_by` | `ORDER BY` | Required when pagination is active |
+| `filters[].subquery` | `IN ( SELECT ... )` | One level; forces new Open SQL syntax |
+| `union` | `WITH +cte AS ( ... UNION DISTINCT ... )` or N separate SELECTs merged in ABAP | See §8.2 |
 
 ---
 
@@ -663,10 +778,13 @@ Params are bound to filter conditions that use `"param": "<key>"`. The engine ap
 **Offset pagination**
 - Client-side on Open SQL; native on AMDP only
 
+**UNION**
+- Done on the database through an Open SQL CTE only for a 2-branch count where the database supports it; otherwise merged in ABAP memory (§8.2)
+
 ### ❌ Not Doable (Without HANA / Native SQL)
 - Window functions (ROW_NUMBER, RANK)
 - Recursive queries
-- CTEs (WITH clause)
+- General-purpose CTEs (the engine uses a CTE internally only for the 2-branch UNION count, §8.2)
 - Complex subqueries beyond one level in SELECT
 - JSON processing inside SQL
 
@@ -674,9 +792,20 @@ Params are bound to filter conditions that use `"param": "<key>"`. The engine ap
 
 ## 8. Execution Strategy Options
 
-The engine evaluates the query feature set and system landscape in order, escalating to the next strategy tier when any trigger condition is met. The first matching tier wins.
+### 8.0 What actually runs in v1.6
 
-### 8.1 Decision Table
+**Every non-union query executes as dynamic ABAP Open SQL.** `ZCL_JSON_DSL_BUILDER=>DETERMINE_STRATEGY` still applies two of the design-table rules below and labels the query accordingly:
+
+| Rule | Label set in `meta.strategy_used` | What executes |
+|------|-----------------------------------|---------------|
+| `limit.offset > 0` and `sy-saprl < 740` | `NATIVE_SQL` | Open SQL (Native SQL executor not built) |
+| ≥ 3 `metrics` and ≥ 2 `group_by` fields | `AMDP` | Open SQL (AMDP executor not built) |
+| Anything else | `OPEN_SQL` | Open SQL |
+| `union` present | `CTE_UNION` or `INMEMORY_UNION` | See §8.2 |
+
+Callers should treat `NATIVE_SQL` / `AMDP` as "would have escalated". The design table in §8.1 is kept as the target architecture; rules 1–3 and 5 depend on Phase 3 features that don't exist yet.
+
+### 8.1 Decision Table (target design)
 
 | Priority | Condition | Strategy | Reason |
 |----------|-----------|----------|--------|
@@ -688,9 +817,51 @@ The engine evaluates the query feature set and system landscape in order, escala
 | 6 | Heavy aggregation: `metrics` count ≥ 3 AND `group_by` on 2+ fields AND estimated rows > 500k | **Option 3: AMDP** | HANA columnar engine significantly outperforms ABAP row-by-row for this profile |
 | 7 | All other queries | **Option 1: Open SQL** | Default safe path |
 
-> **How the engine checks row estimates:** The executor checks `mandt_count` from `T000` and uses table statistics from `DB02` (if available) or falls back to a whitelist-configured `estimated_rows` hint per table entry. If no estimate is available, Option 1 is used and `DSL_EXEC_005` warns when pagination is active.
+> **Row estimates (target design, not built):** The executor would check `mandt_count` from `T000` and use table statistics from `DB02` (if available), or fall back to a whitelist-configured `estimated_rows` hint per table entry. *In v1.6, rule 6 fires on the metric/group-by shape alone; no row estimate is taken.*
 
-### 8.2 Strategy Profiles
+### 8.2 UNION execution — CTE_UNION vs INMEMORY_UNION (v1.6)
+
+The executor picks one of two paths at runtime. The choice is reported in `meta.strategy_used`.
+
+**`CTE_UNION`** — a single database round trip:
+```sql
+WITH +combined AS (
+  SELECT f1, f2 FROM TAB_A WHERE ...
+  UNION DISTINCT
+  SELECT f1, f2 FROM TAB_B WHERE ... )
+SELECT COUNT(*) FROM (+combined) INTO @lv_count.
+```
+Attempted **only when all of these hold:**
+1. Count-only query: exactly one metric `{"type":"count","field":"*"}`, no top-level `select` or `group_by`
+2. `output.include_rows = false`
+3. Exactly 2 branches
+4. `ZCL_JSON_DSL_CAPABILITY=>IS_CTE_UNION_SUPPORTED( )` returns true
+
+The capability check runs a tiny `WITH +probe AS ( SELECT mandt FROM t000 UNION DISTINCT SELECT mandt FROM t000 ) SELECT COUNT(*) ...` once per work process and caches the result. `ZJSON_DSL_CONFIG` key `CTE_UNION_MODE` overrides it: `AUTO` (default, probe), `FORCE_ON`, `FORCE_OFF`.
+
+**`INMEMORY_UNION`** — everything else (rows wanted, more than 2 branches, no CTE support, or CTE failure):
+- Each branch is SELECTed separately. The work area is the branch table's own DDIC structure, read with `INTO CORRESPONDING FIELDS`
+- Rows are concatenated on the application server
+- For `distinct: true`, duplicates are removed by building a `|`-joined value signature per row into a SORTED UNIQUE table
+- Rows and the count are computed from the same materialized set, so both can be returned together
+
+**CTE failure is loud, not silent.** If the CTE attempt raises, the engine falls back to in-memory and adds warning **`DSL_EXEC_007`** naming the underlying error. The in-memory path materializes every qualifying row. A silent fall-back into it once hid a broken CTE path for ten commits and risks `TSV_TNEW_PAGE_ALLOC_FAILED` on large tables.
+
+> ⚠️ **Known limitation (v1.6):** the CTE path always emits `UNION DISTINCT`, so a count-only query with `"distinct": false` that takes the CTE path returns the *distinct* count. Until this is fixed, send `distinct: false` with `include_rows: true` (which forces in-memory), or set `CTE_UNION_MODE = FORCE_OFF`.
+
+### 8.3 Old vs new Open SQL syntax (v1.6)
+
+The builder sets `needs_new_sql = true` when the query has **JOINs**, a **subquery in filters**, or **both `select` fields and `metrics`**. Otherwise it emits *old* syntax.
+
+| | Old syntax | New (strict) syntax |
+|---|---|---|
+| Used for | Plain single-table dynamic SELECTs; union in-memory branches | JOINs, subqueries, mixed field + metric selects; the CTE union count |
+| Shape | `SELECT (fields) INTO TABLE <t> FROM (from) ...` | `SELECT (fields) FROM (from) ... INTO TABLE @<t>` |
+| Dynamic field list | **space**-separated | **comma**-separated |
+
+Mixing the two produces errors that only appear at runtime. A single SQL fragment must never be shared between an old-syntax and a new-syntax consumer. Union branches therefore carry both `select_clause` (space) and `select_clause_csv` (comma), built from one field list.
+
+### 8.4 Strategy Profiles
 
 | Strategy | ABAP Class Used | SAP Release Required | Risk |
 |----------|-----------------|----------------------|------|
@@ -738,41 +909,44 @@ Defined in `ZJSON_DSL_WHITELIST.json` or custom table `ZJSON_DSL_WL`. Note `MAND
 }
 ```
 
-**Whitelist rules:**
-- Unlisted table → `DSL_WL_TABLE_001`
-- Unlisted field → `DSL_WL_FIELD_002`
-- Caller lacks required role → `DSL_WL_ROLE_003`
-- Authorization object `Z_DSL_EXEC` with `ACTVT = 16` checked at runtime
+**Whitelist rules (STRICT mode — skipped entirely in OPEN mode, §22):**
+- Unlisted table → `DSL_WL_TABLE_001`. Checked for `sources`, `joins` targets and union-branch sources. *Not checked:* tables inside a filter `subquery`
+- Unlisted field → `DSL_WL_FIELD_002`. Checked for `select` fields only; a `*` row for the table allows all fields. *Not checked in v1.6:* filter, `group_by`, `order_by` and join fields
+- Caller lacks required role → `DSL_WL_ROLE_003`. *Not enforced in v1.6:* the `ROLE` column is not evaluated and the code is never emitted
+- Authorization object `Z_DSL_EXEC` with `ACTVT = 16` — *not built in v1.6*
 - Whitelist changes require transport; no direct production edits
 
 ### 9.2 Phase A — Structural Validation (pre-parse)
-- JSON is well-formed and `version` matches a supported version
-- Mandatory fields (`sources` or `entity`, `select`) are present and non-empty
-- `entity` and `sources`/`joins` are not both present (`DSL_PARSE_005`)
-- No unknown top-level keys (strict schema mode)
+- JSON is well-formed (starts with `{`) and `version` is `"1.2"` or `"1.3"`. The HTTP handler first strips any BOM / characters before the first `{`
+- Exactly one of `entity`, `sources` or `union` is present; `select` is present unless `union` is used (`DSL_PARSE_003`)
+- `entity` and `sources`/`joins` are not both present; `union` is not combined with any of them (`DSL_PARSE_005`)
+- No unknown top-level keys (`DSL_PARSE_004`)
+- Every condition group carries `logic` (`DSL_PARSE_006`)
+- In entity mode, the entity exists and is active in `ZJSON_DSL_ENTITY` (`DSL_ENTITY_001`)
 
 ### 9.3 Phase B — Semantic Validation (post-parse)
-- All tables in `sources` and `joins` exist in the whitelist
-- All fields in `select`, filters, `group_by`, `order_by` exist in the whitelist for their table
-- All filter condition tree field references are resolvable to a whitelisted alias
-- All `having` metric references match an alias in `metrics`; no circular references (a metric alias may not reference itself or another metric alias in a chain)
+- Whitelist checks per §9.1 (STRICT mode only)
+- All `having` metric references match an alias in `metrics` (`DSL_SEM_001`)
 - `group_by` contains all non-aggregate `select` fields when `metrics` is non-empty (`DSL_SEM_003`)
 - `having` is only present when `group_by` is non-empty (`DSL_SEM_002`)
 - `params` supplies a value for every `"param": "<key>"` reference in filters (`DSL_SEM_004`)
-- `type` annotations are from the allowed set; unknown types default to `STRING` + warning `DSL_SEM_006`
-- `currency_field` / `unit_field` references resolve to a field in scope (`DSL_SEM_008`)
-- JOIN conditions on client-dependent tables include MANDT (`DSL_SEM_007`)
+- No duplicate aliases across `select` and `metrics` (`DSL_SEM_005`)
 - `order_by` is present when `limit.offset > 0` or `limit.page_token` is non-null (`DSL_SEM_009`)
 - `IS NULL` / `IS NOT NULL` conditions do not carry a `value` or `param` (`DSL_SEM_010`)
-- Every `field` reference is qualified as `alias.FIELDNAME` — bare names rejected (`DSL_SEM_011`)
+- Every `select`, `group_by` and filter field is qualified as `alias.FIELDNAME` (`DSL_SEM_011`)
+- Union: ≥ 2 branches, each with sources and select fields (`DSL_SEM_012`); equal column count across branches (`DSL_SEM_013`)
+- ~~JOIN conditions on client-dependent tables include MANDT (`DSL_SEM_007`)~~ — **removed in v1.6**, see §5.2
+- *Not enforced in v1.6:* `type` annotation check / `DSL_SEM_006`; `currency_field` / `unit_field` scope check / `DSL_SEM_008`
 
 ### 9.4 Phase C — Injection Defense
-- No raw SQL fragments in any string field
-- Field values match `^[A-Z][A-Z0-9_]*\.[A-Z][A-Z0-9_]*$` (enforces `alias.FIELD` pattern; rejects bare names and table-name qualifications)
-- Alias values (in `select`, `metrics`) match `^[A-Z][A-Z0-9_]*$` (no dot, no space)
-- `value` arrays in filter conditions are scalar only — no nested objects
-- Operator values matched against the exact allowed set; any unlisted operator rejected (`DSL_SEC_003`)
-- String values exceeding 500 characters in filters rejected (`DSL_SEC_004`)
+- `select` field values match `^[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*$` (enforces the `alias.FIELD` pattern; `DSL_SEC_002`)
+- Alias values (in `select`, `metrics`) match `^[A-Za-z][A-Za-z0-9_]*$` (no dot, no space; `DSL_SEC_002`)
+- Filter operators matched against the exact allowed set (§5.4); any other operator is rejected (`DSL_SEC_003`)
+- Filter string values (scalar and each array element) over 500 characters are rejected (`DSL_SEC_004`)
+- All literal and param values are single-quote-escaped by the builder before being placed in SQL
+- *Not built in v1.6:* a separate raw-SQL-fragment scan (`DSL_SEC_001`)
+
+> Phase C failures raise `ZCX_DSL_SECURITY` and abort immediately. Phase B collects all errors before returning.
 
 ---
 
@@ -798,53 +972,68 @@ Defined in `ZJSON_DSL_WHITELIST.json` or custom table `ZJSON_DSL_WL`. Note `MAND
 | `message` | string | Human-readable description |
 | `field` | string \| null | DSL path where error occurred, e.g. `select[1].field` |
 | `table` | string \| null | SAP table name involved, if applicable |
-| `hint` | string \| null | Suggested remediation |
+| `hint` | string \| null | Suggested remediation. Data element domain `ZDSL_JSON_STR` = `STRG` (unbounded), so long hints and full SQL are never truncated |
+
+**Hint content by stage (v1.6):**
+- **Parse errors** — the expected-format hint for that code (e.g. allowed top-level keys, supported versions)
+- **Execution errors on the standard path** — `ENRICH_HINT` matches the raw ABAP message to a known pattern, adds a plain-English cause, and always appends `Generated SQL: <statement>`. Patterns covered: rejected boolean expression (usually `!=`, or a cross-type field comparison), data-type mismatch (MIN/MAX on DATS/CHAR, wrongly formatted filter value), unknown column, and dynamic-CTE construction failure
+- **Execution errors on the union path** — the hint is the assembled SQL (no pattern enrichment)
 
 ### 10.2 Error Code Reference
+
+> The **Emitted** column states whether v1.6 code actually produces the code. "Reserved" codes are defined by the design but never returned. Do not build caller logic around them.
 
 **Parse errors (DSL_PARSE_xxx)**
 
 | Code | Severity | Condition |
 |------|----------|-----------|
-| `DSL_PARSE_001` | ERROR | Malformed JSON |
-| `DSL_PARSE_002` | ERROR | Unsupported DSL version |
-| `DSL_PARSE_003` | ERROR | Missing mandatory field |
-| `DSL_PARSE_004` | ERROR | Unknown top-level key (strict mode) |
-| `DSL_PARSE_005` | ERROR | Both `entity` and `sources`/`joins` present |
+| `DSL_PARSE_001` | ERROR | Malformed JSON (body doesn't start with `{`, or is empty) |
+| `DSL_PARSE_002` | ERROR | Unsupported DSL version (only `"1.2"` / `"1.3"`) |
+| `DSL_PARSE_003` | ERROR | Missing mandatory field (`version`; `select`; one of `entity`/`sources`/`union`; `union.branches`) |
+| `DSL_PARSE_004` | ERROR | Unknown top-level key |
+| `DSL_PARSE_005` | ERROR | `entity` with `sources`/`joins`, or `union` with any of them |
 | `DSL_PARSE_006` | ERROR | Condition node missing mandatory `logic` field |
 
-**Whitelist errors (DSL_WL_xxx)**
+**Entity errors (DSL_ENTITY_xxx)** — *new in v1.6 documentation*
 
 | Code | Severity | Condition |
 |------|----------|-----------|
-| `DSL_WL_TABLE_001` | ERROR | Table not in whitelist |
-| `DSL_WL_FIELD_002` | ERROR | Field not allowed for this table |
-| `DSL_WL_ROLE_003` | ERROR | Caller lacks required role |
+| `DSL_ENTITY_001` | ERROR | Entity name not found, or not active, in `ZJSON_DSL_ENTITY` |
+
+**Whitelist errors (DSL_WL_xxx)** — STRICT mode only
+
+| Code | Severity | Emitted | Condition |
+|------|----------|---------|-----------|
+| `DSL_WL_TABLE_001` | ERROR | Yes | Table not in whitelist |
+| `DSL_WL_FIELD_002` | ERROR | Yes | `select` field not allowed for this table |
+| `DSL_WL_ROLE_003` | ERROR | Reserved | Caller lacks required role |
 
 **Semantic errors (DSL_SEM_xxx)**
 
-| Code | Severity | Condition |
-|------|----------|-----------|
-| `DSL_SEM_001` | ERROR | `having` alias not found in `metrics` |
-| `DSL_SEM_002` | ERROR | `having` present without `group_by` |
-| `DSL_SEM_003` | ERROR | Non-aggregate `select` field missing from `group_by` |
-| `DSL_SEM_004` | ERROR | `param` key in filters not supplied in `params` |
-| `DSL_SEM_005` | ERROR | Duplicate alias in `select` or `metrics` |
-| `DSL_SEM_006` | WARNING | Unknown `type` annotation — defaulted to `STRING` |
-| `DSL_SEM_007` | ERROR | JOIN between client-dependent tables missing MANDT condition |
-| `DSL_SEM_008` | ERROR | `currency_field` or `unit_field` not resolvable in scope |
-| `DSL_SEM_009` | ERROR | Pagination active but `order_by` is absent |
-| `DSL_SEM_010` | ERROR | `IS NULL` / `IS NOT NULL` condition carries a `value` or `param` (must be absent) |
-| `DSL_SEM_011` | ERROR | Field reference is not qualified as `alias.FIELDNAME` |
+| Code | Severity | Emitted | Condition |
+|------|----------|---------|-----------|
+| `DSL_SEM_001` | ERROR | Yes | `having` alias not found in `metrics` |
+| `DSL_SEM_002` | ERROR | Yes | `having` present without `group_by` |
+| `DSL_SEM_003` | ERROR | Yes | Non-aggregate `select` field missing from `group_by` |
+| `DSL_SEM_004` | ERROR | Yes | `param` key in filters not supplied in `params` |
+| `DSL_SEM_005` | ERROR | Yes | Duplicate alias in `select` or `metrics` |
+| `DSL_SEM_006` | WARNING | Reserved | Unknown `type` annotation — defaulted to `STRING` |
+| `DSL_SEM_007` | — | **Removed** | ~~JOIN missing MANDT condition~~. Removed in v1.6 because it blocked legitimate GRAC queries; MANDT ON-conditions are stripped by the builder |
+| `DSL_SEM_008` | ERROR | Reserved | `currency_field` or `unit_field` not resolvable in scope |
+| `DSL_SEM_009` | ERROR | Yes | Pagination active but `order_by` is absent |
+| `DSL_SEM_010` | ERROR | Yes | `IS NULL` / `IS NOT NULL` condition carries a `value` or `param` (must be absent) |
+| `DSL_SEM_011` | ERROR | Yes | Field reference is not qualified as `alias.FIELDNAME` |
+| `DSL_SEM_012` | ERROR | Yes | Union has fewer than 2 branches, or a branch has no sources / no select fields |
+| `DSL_SEM_013` | ERROR | Yes | Union branches have different select column counts |
 
 **Injection / security errors (DSL_SEC_xxx)**
 
-| Code | Severity | Condition |
-|------|----------|-----------|
-| `DSL_SEC_001` | ERROR | Raw SQL fragment detected |
-| `DSL_SEC_002` | ERROR | Field or alias contains disallowed characters or fails `alias.FIELD` pattern |
-| `DSL_SEC_003` | ERROR | Operator not in allowed set |
-| `DSL_SEC_004` | ERROR | Filter value string exceeds 500 characters |
+| Code | Severity | Emitted | Condition |
+|------|----------|---------|-----------|
+| `DSL_SEC_001` | ERROR | Reserved | Raw SQL fragment detected |
+| `DSL_SEC_002` | ERROR | Yes | Field or alias contains disallowed characters or fails `alias.FIELD` pattern |
+| `DSL_SEC_003` | ERROR | Yes | Filter operator not in allowed set |
+| `DSL_SEC_004` | ERROR | Yes | Filter value string exceeds 500 characters |
 
 **Performance guardrail errors (DSL_GUARD_xxx)**
 
@@ -856,21 +1045,42 @@ Defined in `ZJSON_DSL_WHITELIST.json` or custom table `ZJSON_DSL_WL`. Note `MAND
 
 **Execution errors (DSL_EXEC_xxx)**
 
-| Code | Severity | Condition |
-|------|----------|-----------|
-| `DSL_EXEC_001` | ERROR | ABAP runtime exception during SQL execution |
-| `DSL_EXEC_002` | ERROR | Query exceeded `MAX_TIMEOUT_SEC` execution time limit |
-| `DSL_EXEC_003` | WARNING | `count_distinct` fallback activated (system below NW 7.40 SP08) |
-| `DSL_EXEC_004` | WARNING | Result set truncated at `limit.rows` cap |
-| `DSL_EXEC_005` | WARNING | Offset pagination used in Open SQL mode on large table (estimated rows > `OFFSET_LARGE_TABLE_ROWS`) |
-| `DSL_EXEC_006` | WARNING | `IS NULL` used on a STRING or DATE field — SAP initial value is `' '` / `'00000000'`, not NULL; result may be empty |
+| Code | Severity | Emitted | Condition |
+|------|----------|---------|-----------|
+| `DSL_EXEC_001` | ERROR | Yes | ABAP runtime exception during SQL execution (including RTTI failure on a union branch table). `hint` carries the cause and the generated SQL |
+| `DSL_EXEC_002` | ERROR | Reserved | Query exceeded `MAX_TIMEOUT_SEC` execution time limit |
+| `DSL_EXEC_003` | WARNING | Reserved | `count_distinct` fallback activated (see `meta.count_distinct_fallback` instead) |
+| `DSL_EXEC_004` | WARNING | Reserved | Result set truncated at `limit.rows` cap |
+| `DSL_EXEC_005` | WARNING | Reserved | Offset pagination used in Open SQL mode on large table |
+| `DSL_EXEC_006` | WARNING | Reserved | `IS NULL` used on a STRING or DATE field |
+| `DSL_EXEC_007` | WARNING | Yes | CTE union path failed; fell back to `INMEMORY_UNION`. Message names the underlying failure (§8.2) |
 
 **Deprecation warnings (DSL_DEPR_xxx)**
 
-| Code | Severity | Condition |
-|------|----------|-----------|
-| `DSL_DEPR_001` | WARNING | Flat filter array used (v1.0/v1.1 syntax); treated as top-level AND. Removed in v2.0 |
-| `DSL_DEPR_002` | WARNING | Flat `on` array used in join (v1.0/v1.1 syntax); treated as AND. Removed in v2.0 |
+| Code | Severity | Emitted | Condition |
+|------|----------|---------|-----------|
+| `DSL_DEPR_001` | WARNING | Yes | Flat filter array used (v1.0/v1.1 syntax); treated as top-level AND. Removed in v2.0 |
+| `DSL_DEPR_002` | WARNING | Reserved | Flat `on` array used in join; accepted and treated as AND, but no warning is emitted |
+
+**Authentication errors (DSL_AUTH_xxx)** — returned by the ICF handlers before the engine runs
+
+| Code | HTTP | Endpoint | Condition |
+|------|------|----------|-----------|
+| `DSL_AUTH_001` | 405 | `/sap/zdsl/auth` | Method other than POST |
+| `DSL_AUTH_002` | 400 | `/sap/zdsl/auth` | `client_id` or `client_secret` missing |
+| `DSL_AUTH_003` | 401 | `/sap/zdsl/auth` | Invalid credentials, or client inactive / past `valid_to` |
+| `DSL_AUTH_004` | 401 | `/sap/zdsl/query` | No token in `X-DSL-Token` or `Authorization: Bearer` |
+| `DSL_AUTH_005` | 401 | `/sap/zdsl/query` | Token invalid or expired |
+
+`/sap/zdsl/query` also returns `HTTP_405` for methods other than GET / POST. Auth-stage errors return only an `errors` array (code + message), not the full response envelope.
+
+**Console errors** — `/sap/zdsl/console` only (§20.7). These return the full response envelope.
+
+| Code | HTTP | Condition |
+|------|------|-----------|
+| `DSL_AUTH_006` | 403 | Logged-on user has no display authorization (`S_TABU_DIS` / `S_TABU_NAM`) for a table in the request. One entry per table, `table` filled |
+| `DSL_AUTH_007` | 403 | POST without header `X-DSL-Console: 1` (not sent by the console page — CSRF protection) |
+| `DSL_AUTH_008` | 403 | The console is running as a service user from `ZJSON_DSL_CLNT` (SICF node has fixed logon data) |
 
 ---
 
@@ -881,14 +1091,15 @@ Defined in `ZJSON_DSL_WHITELIST.json` or custom table `ZJSON_DSL_WL`. Note `MAND
 ```json
 {
   "query_id": "Q-20260123-0007",
+  "metricName": "Users with many roles",
+  "metricId": "Q-20260123-0007",
+  "priority": "High",
+  "module": "User Access Review",
   "data": {
     "rows": [
-      { "user": "RAJA_K", "role": "Z_FI_DISPLAY", "role_count": 8 }
+      { "user": "RAJA_K", "role_count": "8" }
     ],
-    "aggregates": [
-      { "alias": "role_count", "type": "count_distinct", "value": 8 },
-      { "alias": "row_count",  "type": "count",          "value": 142 }
-    ]
+    "aggregates": []
   },
   "meta": {
     "row_count": 50,
@@ -901,32 +1112,57 @@ Defined in `ZJSON_DSL_WHITELIST.json` or custom table `ZJSON_DSL_WL`. Note `MAND
     "entity_resolved": "user_access"
   },
   "warnings": [],
-  "errors": []
+  "errors": [],
+  "debug": {
+    "generated_sql": "SELECT u~BNAME, COUNT( DISTINCT ru~AGR_NAME ) FROM USR02 AS u LEFT OUTER JOIN ...",
+    "strategy": "OPEN_SQL",
+    "source_counts": [
+      { "table": "USR02", "row_count": 4210 },
+      { "table": "left join:AGR_USERS", "row_count": 18877 }
+    ]
+  }
 }
 ```
+
+- `metricName`, `metricId`, `priority`, `module` appear only when they were sent. `description` is not echoed
+- **All `data.rows` values are JSON strings**, including numbers and metric results (`"8"`, not `8`), in the SAP internal format: dates `"YYYYMMDD"`, NUMC with leading zeros. The caller converts types
+- Each row object is keyed by the `select` alias (or the raw `field` if no alias), followed by the `metrics` aliases
+- `debug` is present only when `output.debug: true`
 
 ### 11.2 Aggregates Array Contract
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `alias` | string | Matches the `alias` in `metrics` |
-| `type` | string | Metric type (`count`, `count_distinct`, `sum`, `avg`, `min`, `max`) |
-| `value` | number \| null | `null` when no rows matched and metric is non-count |
+| `alias` | string | Matches the `alias` in `metrics` (`"total"` if none given) |
+| `type` | string | `count` |
+| `value` | number | Integer count |
 
-When `group_by` is present, aggregate values are embedded per row (keyed by alias). The top-level `aggregates` array is populated only for non-grouped aggregate-only queries.
+**As implemented in v1.6, `data.aggregates` is populated only by UNION count-only queries** (one entry, with `include_aggregates: true`). For every non-union query, metric values, grouped or not, come back as columns in `data.rows`, and `aggregates` is `[]`. An ungrouped count therefore returns one row: `{"total": "142"}`.
 
 ### 11.3 Meta Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `row_count` | integer | Rows in this response page |
-| `total_count` | integer \| null | Total matching rows (`include_summary: true` only) |
+| `row_count` | integer | Rows in this response page. For a union with only an aggregate, `1` |
+| `total_count` | integer | Rows read before pagination when `include_summary: true`; otherwise `0` (never `null`). Capped by the `UP TO` limit, so it is not a true table-wide count |
 | `has_more` | boolean | `true` when more pages are available |
 | `next_page_token` | string \| null | Pass to next request `limit.page_token`; `null` on last page |
-| `execution_time_ms` | integer | Wall-clock SQL execution time in milliseconds |
-| `strategy_used` | enum | `OPEN_SQL`, `NATIVE_SQL`, or `AMDP` |
-| `count_distinct_fallback` | boolean | `true` when the COUNT DISTINCT fallback was used |
+| `execution_time_ms` | integer | Wall-clock execution time in milliseconds |
+| `strategy_used` | enum | `OPEN_SQL`, `NATIVE_SQL`, `AMDP` (labels only — see §8.0), `CTE_UNION`, `INMEMORY_UNION` |
+| `count_distinct_fallback` | boolean | `true` when `count_distinct` is used on a release below 7.40 (§5.6) |
 | `entity_resolved` | string \| null | Entity name if entity mode was used; `null` for raw mode |
+
+### 11.4 Debug Block (v1.6)
+
+Present only when `output.debug: true`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `generated_sql` | string | The assembled SELECT statement (tilde notation) |
+| `strategy` | string | Builder strategy (`OPEN_SQL` / `NATIVE_SQL` / `AMDP` / `UNION`) |
+| `source_counts[]` | array | One entry per source table (`"USR02"`), join target (`"left join:AGR_USERS"`) and union-branch table (`"union:GRACUSERACTVL"`). `row_count` is the **unfiltered** `COUNT(*)` of that table; `-1` means the count itself failed |
+
+**Typical use:** a metric returns zero. If a `source_counts` entry is `0`, the cause is the data, not the query. For example, `GRACACTUSAGE` is empty until the `GRAC_ACTION_USAGE_SYNC` job has run. If every table has rows, the filters or join keys are the cause.
 
 ---
 
@@ -950,11 +1186,33 @@ ZCL_JSON_DSL_BUILDER
     │  Selects execution strategy based on query features and sy-saprl.
     ▼
 ZCL_JSON_DSL_EXECUTOR
-       Executes query, applies pagination, writes Flex Mode audit log,
-       assembles ZST_DSL_RESPONSE.
+       Executes query, applies pagination, writes audit + access logs,
+       chooses CTE_UNION / INMEMORY_UNION, enriches error hints, populates
+       the debug block, assembles the response.
 ```
 
-**Supporting artifacts:**
+**As built (v1.6) — 13 classes, 1 interface, 2 reports in package `ZDL_JSON_DSL`:**
+
+| Object | Role |
+|--------|------|
+| `ZIF_JSON_DSL_TYPES` | **The contract.** All shared types: `ty_query`, `ty_response`, `ty_cond_node`, `ty_union`, `ty_debug_info`, ... |
+| `ZCL_JSON_DSL_ENGINE` | Facade: parse → resolve → validate → build → execute. Always returns a response, never an exception. Also `GET_TEMPLATE` (the GET payload) |
+| `ZCL_JSON_DSL_PARSER` | Hand-rolled character-level JSON scanner (no `/ui2/cl_json` dependency, so it runs on any release). Whitespace detection uses Unicode code points |
+| `ZCL_JSON_DSL_ENTITY_RESOLVER` | Entity name → sources / joins / fields |
+| `ZCL_JSON_DSL_VALIDATOR` | Whitelist, semantic, guardrail, union and injection checks |
+| `ZCL_JSON_DSL_BUILDER` | Condition trees → SQL; old/new syntax switch; union branch SQL (both separators); subquery recursion |
+| `ZCL_JSON_DSL_EXECUTOR` | Dynamic SELECT with RTTI result types, pagination, union paths, audit/access log, hints, debug |
+| `ZCL_JSON_DSL_CAPABILITY` | Runtime CTE+UNION probe against T000, cached per work process, overridable via `CTE_UNION_MODE` |
+| `ZCL_HTTP_DSL_HANDLER` | ICF `/sap/zdsl/query`: POST = query, GET = template |
+| `ZCL_HTTP_DSL_AUTH` | ICF `/sap/zdsl/auth`: client_id / secret → bearer token |
+| `ZCL_JSON_DSL_TEST` | ABAP Unit tests |
+| `ZCX_DSL_PARSE`, `ZCX_DSL_SECURITY` | Exception classes |
+| `ZDSL_SEED_CONFIG` (report) | Seeds `ZJSON_DSL_CONFIG` and the `user_access` entity |
+| `ZDSL_SETUP_ICF` (report) | Registers the ICF nodes |
+
+> **Condition trees are flattened.** ABAP has no recursive structure types, so the JSON tree is stored as a flat table of `ty_cond_node` (`node_id`, `parent_id`, `node_type` `G`=group / `L`=leaf). `BUILD_CONDITION_SQL` rebuilds the nesting by walking `parent_id`.
+
+**Supporting artifacts (original design names — the as-built types live in `ZIF_JSON_DSL_TYPES`):**
 
 | Artifact | Type | Purpose |
 |----------|------|---------|
@@ -978,7 +1236,7 @@ DATA(ls_response) = lo_engine->execute(
 ).
 ```
 
-`ZCL_JSON_DSL_ENGINE` wires all five classes, catches top-level exceptions, and always returns `ZST_DSL_RESPONSE` — never a raw exception to the caller.
+`ZCL_JSON_DSL_ENGINE` wires the pipeline, catches top-level exceptions, and always returns a response structure — never a raw exception to the caller.
 
 ---
 
@@ -992,7 +1250,7 @@ Flex Mode allows raw SQL expressions in the `derived` array (Phase 3). Because i
 
 ### 13.2 Audit Log
 
-Every Flex Mode execution writes a record to `ZJSON_DSL_AUDIT`:
+*As implemented in v1.6 (Flex Mode is not built), **every** executed query writes a record to `ZJSON_DSL_AUDIT`, plus field-level rows to `ZJSON_DSL_ALOG` (§23). `STRATEGY_USED` holds `OPEN_SQL` / `NATIVE_SQL` / `AMDP` / `UNION`.* Planned record layout:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1009,9 +1267,9 @@ Every Flex Mode execution writes a record to `ZJSON_DSL_AUDIT`:
 | `ERROR_CODE` | `CHAR30` | First error code if `STATUS = E` |
 
 ### 13.3 Retention and Alerting
-- Audit records retained for 90 days minimum (configurable via `ZJSON_DSL_CONFIG`)
-- Any `DSL_SEC_xxx` error triggers an immediate alert to the security contact defined in config
-- Flex Mode usage reports available via transaction `ZJSON_DSL_AUDIT_RPT`
+- Audit records retained for 90 days minimum (`AUDIT_RETENTION_DAYS` in `ZJSON_DSL_CONFIG`). *Not built in v1.6:* an automatic purge job
+- *Not built in v1.6:* the alert to a security contact on `DSL_SEC_xxx`
+- *Not built in v1.6:* transaction `ZJSON_DSL_AUDIT_RPT`. Use SE16 on `ZJSON_DSL_AUDIT` / `ZJSON_DSL_ALOG`
 
 ---
 
@@ -1102,7 +1360,15 @@ Client B (S/4H):   POST https://erp.betainc.net:44300/sap/zdsl/query
 Client C (cloud):  POST https://my123456.s4hana.cloud.sap:443/sap/zdsl/query
 ```
 
-The SAP ICF handler has no awareness of which client number or which of our products is calling. Client identity is a concern in our application registry, not in SAP. The `X-DSL-Client-ID` header we send is for our own correlation logging — SAP passes it through to the response `meta` but does not use it for routing or access control.
+The SAP ICF handler has no awareness of which client number or which of our products is calling. Client identity is a concern in our application registry, not in SAP. The `X-DSL-Client-ID` header we send is for our own correlation logging. *As implemented in v1.6, SAP ignores it: it is not echoed in `meta` and not logged.*
+
+**Endpoints:**
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/sap/zdsl/auth` | `client_id` + `client_secret` → bearer token |
+| `POST` | `/sap/zdsl/query` | Execute a DSL query (bearer token required) |
+| `GET` | `/sap/zdsl/query` | Self-documenting: returns `{"message": "...", "template": {<valid example payload>}}`. No token required |
 
 **Our client registry entry (one per client SAP system):**
 ```json
@@ -1136,9 +1402,12 @@ X-DSL-Request-ID: req-20260324-00042
 | Header | Required | Description |
 |--------|----------|-------------|
 | `Content-Type` | Yes | Must be `application/json` |
-| `Authorization` | Yes | `Bearer <token>` — short-lived token issued by the ICF auth endpoint |
-| `X-DSL-Client-ID` | Yes | Our identifier for this client installation, used for correlation logging |
-| `X-DSL-Request-ID` | Recommended | Our unique request ID for end-to-end tracing across our logs and SAP ICF logs |
+| `X-DSL-Token` | Yes* | The bearer token (raw, no `Bearer ` prefix). **Preferred**: the SAP ICF layer consumes the standard `Authorization` header for its own logon in many configurations |
+| `Authorization` | Yes* | `Bearer <token>`. Fallback, read only when `X-DSL-Token` is absent. Works when the ICF node uses anonymous / service logon |
+| `X-DSL-Client-ID` | Recommended | Our identifier for this client installation. Our side only; ignored by SAP in v1.6 |
+| `X-DSL-Request-ID` | Recommended | Our unique request ID for tracing. Our side only; ignored by SAP in v1.6 |
+
+\* One of `X-DSL-Token` or `Authorization` is required.
 
 ### 20.3 Authentication flow
 
@@ -1152,10 +1421,15 @@ Content-Type: application/json
 { "client_id": "CLIENT_001", "client_secret": "<secret>" }
 ```
 
-SAP returns a short-lived bearer token (TTL: 1 hour, configurable in `ZJSON_DSL_CONFIG`). The ICF auth handler maps the `client_id` to the `ZDSL_SVC_USER` technical service user and validates the secret against a hashed credential stored in `ZJSON_DSL_CLIENTS`.
+Response:
+```json
+{ "access_token": "<token>", "token_type": "Bearer", "expires_in": 3600 }
+```
+
+The ICF auth handler hashes the secret and looks up `ZJSON_DSL_CLNT` for a row with that `client_id` and hash, `active = X` and `valid_to >= today`. That row's `svc_user` is the service user the token maps to. TTL comes from `TOKEN_TTL_SECONDS` in `ZJSON_DSL_CONFIG` (default 3600). Errors: `DSL_AUTH_001`–`003` (§10.2).
 
 **Step 2 — Query execution:**
-All subsequent query requests carry the bearer token in the `Authorization` header. The ICF query handler validates the token, maps it to the service user, and runs the engine under that user's authorizations.
+All subsequent query requests carry the token in the `X-DSL-Token` header (or `Authorization: Bearer`). The ICF query handler validates the token and maps it to the service user, which is passed to the engine as the caller for audit logging. Missing token → `DSL_AUTH_004`; invalid or expired → `DSL_AUTH_005` (both HTTP 401). On 401, request a new token and retry once.
 
 ### 20.4 Response
 
@@ -1164,14 +1438,17 @@ HTTP status codes map to DSL error categories:
 | HTTP Status | Condition | DSL Error Range |
 |-------------|-----------|-----------------|
 | `200 OK` | Success (even if warnings present) | — |
-| `400 Bad Request` | Parse or semantic validation failure | `DSL_PARSE_xxx`, `DSL_SEM_xxx` |
-| `401 Unauthorized` | Invalid or expired bearer token | — |
-| `403 Forbidden` | Caller lacks required SAP role | `DSL_WL_ROLE_003` |
+| `400 Bad Request` | Parse, semantic or injection validation failure | `DSL_PARSE_xxx`, `DSL_SEM_xxx`, `DSL_SEC_xxx`, `DSL_AUTH_002` |
+| `401 Unauthorized` | Missing, invalid or expired token; bad credentials | `DSL_AUTH_003`–`005` |
+| `403 Forbidden` | Caller lacks required SAP role | `DSL_WL_ROLE_003` (reserved — not reachable in v1.6) |
+| `405 Method Not Allowed` | Wrong HTTP method | `HTTP_405`, `DSL_AUTH_001` |
 | `429 Too Many Requests` | Guardrail limit exceeded | `DSL_GUARD_001` |
-| `500 Internal Server Error` | ABAP runtime exception | `DSL_EXEC_001` |
-| `504 Gateway Timeout` | Query exceeded `MAX_TIMEOUT_SEC` | `DSL_EXEC_002` |
+| `500 Internal Server Error` | ABAP runtime exception, or any other error code | `DSL_EXEC_001`, `DSL_WL_TABLE_001`, `DSL_WL_FIELD_002`, `DSL_ENTITY_001` |
+| `504 Gateway Timeout` | Query exceeded `MAX_TIMEOUT_SEC` | `DSL_EXEC_002` (reserved — not reachable in v1.6) |
 
-A `400` response still returns the full DSL response JSON body with `errors` populated — do not parse HTTP status alone.
+Status is mapped from the **first** error in `errors`. A `4xx`/`5xx` response from `/sap/zdsl/query` (after authentication) still returns the full DSL response JSON body with `errors` populated — do not parse HTTP status alone.
+
+> Note: whitelist and entity errors currently map to **500** because no specific rule matches them. Callers should branch on `errors[0].code`, not on the status.
 
 ### 20.5 Caller examples
 
@@ -1245,31 +1522,61 @@ HttpResponse<String> response = client.send(request,
 - The DSL JSON payload must be assembled server-side in our application — never accept raw DSL JSON from an end user and forward it directly to SAP
 - Log `X-DSL-Request-ID` in our application logs for every request to enable cross-system tracing
 
+### 20.7 Query Console — `/sap/zdsl/console` (v1.6)
+
+A browser page served by the SAP system itself, for people who are logged on to SAP: paste or open a DSL request, run it, read and save the response. Handler `ZCL_HTTP_DSL_CONSOLE`; node registered by `ZDSL_SETUP_ICF` (checkbox `P_CONS`).
+
+| Method | Behaviour |
+|--------|-----------|
+| `GET` | Returns the page. The HTML is built in ABAP (`GET_PAGE_LINES`), with the user, system, client and whitelist mode filled in |
+| `POST` | Runs the posted DSL JSON **as the logged-on user** through `ZCL_JSON_DSL_ENGINE` and returns the same JSON envelope and status codes as `/sap/zdsl/query` |
+
+**Two run modes on the page:**
+- **My SAP user** (default) — posts to `/sap/zdsl/console`. No token. The audit log records the person's user name
+- **Service client** — the page calls `/sap/zdsl/auth` then `/sap/zdsl/query` with `client_id` / `client_secret`, exactly like our external application. Used to test that path from inside the client's network
+
+**Security rules (My SAP user mode):**
+- The SICF node has **no fixed logon data** — the standard SAP logon applies. If the handler finds itself running as a service user listed in `ZJSON_DSL_CLNT`, it refuses (`DSL_AUTH_008`) and the page disables this mode
+- **Table authorization.** Open SQL does not check table authorizations, so before executing, the console collects every table the request reads — `sources`, `joins`, union branches, IN / NOT IN subqueries, and the tables behind an `entity` — and calls `VIEW_AUTHORITY_CHECK` (action `S`) for each: `S_TABU_DIS` for the table's authorization group or `S_TABU_NAM` for the table, the same check as SE16. Any failure stops the request with one `DSL_AUTH_006` per table. `SU53` shows the failed check
+- The engine's whitelist (`WHITELIST_MODE`) still applies on top
+- **CSRF:** the POST must carry `X-DSL-Console: 1` (`DSL_AUTH_007` otherwise)
+- The page sends `Cache-Control: no-store`, `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`
+
+**Page features:** request text area with JSON check, examples (generic only — the metric catalog is never shipped to a client system), open request from a local file, engine template from `GET /sap/zdsl/query`; overrides for `output.include_rows` / `include_aggregates` / `include_summary` / `debug`, `limit.rows` / `page_size`, `version`, `query_id`; response text area plus Rows, Messages (with hints), Debug (row counts per table, generated SQL) and Sent-request views; save every response automatically as a `.json` file with a configurable name pattern (`{query_id}_{yyyyMMdd-HHmmss}_{status}.json`), optionally with the request included; session history. Settings are kept in the browser's local storage; the client secret and token are never stored.
+
+**Editing the page:** the HTML source is `web/dsl_console.html` (ASCII only, lines ≤ 200 chars). `python tools/gen_console_abap.py` regenerates the `APPEND` block in `ZCL_HTTP_DSL_CONSOLE=>GET_PAGE_LINES`. Never edit the generated block by hand.
+
 ---
 
 ## 21. Next Steps
 
-- ~~Define ABAP class architecture~~ ✅ Completed in §12
-- Build `ZCL_JSON_DSL_PARSER` — JSON deserialization and structural validation
-- Build `ZCL_JSON_DSL_ENTITY_RESOLVER` — entity registry lookup and field expansion
-- Build `ZCL_JSON_DSL_VALIDATOR` — all Phase B/C rules including MANDT, pagination ORDER BY, IS NULL, field qualification, guardrails
-- Build `ZCL_JSON_DSL_BUILDER` — condition tree compilation, SQL assembly, strategy selection per §8.1
-- Build `ZCL_JSON_DSL_EXECUTOR` — query execution, timeout, pagination, audit logging, response assembly
-- Build `ZCL_HTTP_DSL_HANDLER` — ICF HTTP handler: receive POST, extract bearer token, call engine, serialise response
-- Build `ZCL_HTTP_DSL_AUTH` — ICF auth handler: validate client_id/secret against `ZJSON_DSL_CLIENTS`, issue bearer token
-- Create `ZJSON_DSL_WL` + `ZJSON_DSL_ENTITY` + `ZJSON_DSL_AUDIT` + `ZJSON_DSL_CONFIG` + `ZJSON_DSL_CLIENTS` custom tables with SM30 views
-- Seed `ZJSON_DSL_CONFIG` with default guardrail values
-- Seed entity registry with `user_access` as the first canonical entity
-- Define unit test class `ZCL_JSON_DSL_TEST` covering all DSL_xxx error codes
+**Done (v1.6, verified end-to-end in a live SAP system):**
+- ~~Define ABAP class architecture~~ ✅ §12
+- ~~Parser, entity resolver, validator, builder, executor, facade~~ ✅
+- ~~ICF query handler and auth handler~~ ✅
+- ~~Custom tables `ZJSON_DSL_WL` / `ENTITY` / `AUDIT` / `ALOG` / `CONFIG` / `CLNT` with maintenance objects~~ ✅
+- ~~Seed config + `user_access` entity (`ZDSL_SEED_CONFIG`); ICF registration (`ZDSL_SETUP_ICF`)~~ ✅
+- ~~Unit test class `ZCL_JSON_DSL_TEST`~~ ✅ (does not yet cover every DSL_xxx code)
+- ~~Subqueries in IN / NOT IN; UNION with CTE / in-memory strategies; debug block; hint enrichment~~ ✅
+- ~~Client Installation Guide, Caller Integration Guide~~ ✅
+- ~~26-KPI GRC metric catalog (`metrics/`) as pure DSL payloads~~ ✅
+
+**Open:**
+- Fix: CTE union path ignores `distinct: false` (§8.2 known limitation)
+- Fix: `DSL_PARSE_004` / `DSL_PARSE_003` hint text doesn't mention `union` or the metadata keys
+- Decide: map `DSL_WL_*` / `DSL_ENTITY_001` to 403 / 400 instead of 500 (§20.4)
+- Apply the whitelist to filter / join / subquery fields in STRICT mode (§9.1). Needed before a client production go-live
+- Apply `limit` to union in-memory branches (§5.12)
+- Implement or formally drop the reserved codes: `SEM_006`, `SEM_008`, `SEC_001`, `EXEC_002`–`006`, `WL_ROLE_003`, `DEPR_002`
 - Performance baseline: Open SQL vs AMDP on USR02 + AGR_USERS with 100k users
-- Write Client Installation Guide (BASIS team runbook)
-- Write Caller Integration Guide (our application developers)
 
 ---
 
 ## 19. Sample End-to-End JSON Query
 
-This sample demonstrates v1.2 features: structured join conditions with MANDT, AND/OR filter condition tree, type annotations, and pagination with mandatory ORDER BY.
+This sample demonstrates v1.2 features: structured join conditions (the MANDT leaves are optional and stripped by the builder), AND/OR filter condition tree, type annotations, and pagination with mandatory ORDER BY.
+
+> ⚠️ As written, this sample fails validation with `DSL_SEM_003`, because `role`, `auth_object` and `valid_from` are selected but not in `group_by`. It is kept to show every feature in one payload. To run it, either add those fields to `group_by` or drop them from `select`.
 
 ```json
 {
@@ -1369,8 +1676,8 @@ This sample demonstrates v1.2 features: structured join conditions with MANDT, A
   "query_id": "Q-20260123-0007",
   "data": {
     "rows": [
-      { "user": "RAJA_K", "role": "Z_FI_DISPLAY", "auth_object": "F_BKPF_BUK", "valid_from": "20240101", "role_count": 14, "row_count": 14 },
-      { "user": "SIVA_R", "role": "Z_MM_BUYER",   "auth_object": "M_BEST_BSA", "valid_from": "20240301", "role_count": 9,  "row_count": 9  }
+      { "user": "RAJA_K", "role": "Z_FI_DISPLAY", "auth_object": "F_BKPF_BUK", "valid_from": "20240101", "role_count": "14", "row_count": "14" },
+      { "user": "SIVA_R", "role": "Z_MM_BUYER",   "auth_object": "M_BEST_BSA", "valid_from": "20240301", "role_count": "9",  "row_count": "9"  }
     ],
     "aggregates": []
   },
@@ -1503,9 +1810,20 @@ All ABAP objects are stored in abapGit-compatible format in the Git repository. 
 
 - Field references in generated SQL use tilde notation: `u~BNAME` (not dot `u.BNAME`)
 - The builder's `TO_SQL_FIELD` method converts DSL dot notation to ABAP tilde automatically
-- Dynamic Open SQL uses old syntax (INTO before FROM) for compatibility with dynamic clauses
-- Host variables do not use `@` escape in dynamic SQL context
+- **Old vs new syntax is switched deliberately** (§8.3). Old syntax (INTO before FROM, no `@`, space-separated fields) is used for plain single-table SELECTs. New syntax (commas, `@` host variables) is used for JOINs, subqueries and mixed field+metric SELECTs. Never share one fragment between the two
+- `AS` **is required** in FROM / JOIN clauses for alias resolution, and must **not** appear in the dynamic SELECT field list (old syntax maps results by position)
+- The result structure is built from **DDIC types via RTTI**, wrapped in TRY/CATCH. `STRING` targets fail in old syntax
+- Union branches use the DDIC table structure + `INTO CORRESPONDING FIELDS`
+- `IN` lists are comma-separated; `ORDER BY` / `GROUP BY` / `HAVING` keywords are only appended when non-empty
+- Pretty-printed JSON is supported: number/boolean scanning stops at whitespace / CR / LF
+
+### Version history
+
+| Version | Date | Summary |
+|---------|------|---------|
+| 1.6 | 2026-11-16 | Spec realigned with code: UNION + CTE/in-memory strategies, subqueries, debug block, hint enrichment, metadata pass-through, `DSL_SEM_007` removed, new codes, as-implemented status of every rule |
+| 1.5 | 2026-03-24 | Whitelist modes, field access log, abapGit implementation notes |
 
 ---
 
-**End of Document — v1.5 (updated 2026-03-24)**
+**End of Document — v1.6 (updated 2026-11-16)**

@@ -39,10 +39,11 @@ binding, pagination, subqueries in IN/NOT IN, UNION (both execution paths),
 
 64 commits. ~5,400 lines of ABAP across 13 classes + 1 interface + 2 reports.
 
-### Built since the spec was last stamped (spec is ~1 version behind the code)
+### Built after v1.5 — now documented in spec v1.6 (2026-11-16)
 
-These are live in `src/` but **not yet written into
-`sap_json_query_engine_specification.md`** (still v1.5 / 2026-03-24):
+These are live in `src/` and were written into
+`sap_json_query_engine_specification.md` v1.6. The spec now marks every rule
+or error code the code does not enforce as "Not enforced" / "Reserved":
 
 - **UNION support** — top-level `"union": {"distinct": bool, "branches": [...]}`,
   mutually exclusive with `entity` / `sources` / `joins`
@@ -58,11 +59,14 @@ These are live in `src/` but **not yet written into
   `module` accepted and echoed in the response. `metricId` fills `query_id` if absent
 - **Subqueries** in `IN` / `NOT IN` filter conditions
 - **`DSL_SEM_007` (MANDT-required-in-JOIN) was REMOVED** — it blocked legitimate
-  GRAC queries. The spec still documents it; the code no longer enforces it.
-  Do not re-add it.
+  GRAC queries. Spec v1.6 marks it removed. Do not re-add it.
 
-If asked to update the spec, §8 (strategy), §11 (output schema) and §5.11 (output
-control) are the sections that have drifted.
+Known open issues are listed in spec §21. The most important: the CTE union path
+always emits `UNION DISTINCT` (it ignores `distinct:false`), and union in-memory
+ignores `limit`.
+
+`docs/dsl-json-reference.md` and `SAP_JSON_DSL_Engine_Parameter_Reference_v2.docx`
+are the caller-facing reference and must be kept in step with the spec.
 
 ---
 
@@ -79,6 +83,10 @@ ZCL_JSON_DSL_ENGINE          facade; always returns a response, never an excepti
 ZCL_JSON_DSL_CAPABILITY      (100)  runtime CTE+UNION probe, cached, config-overridable
 ZCL_HTTP_DSL_HANDLER         (401)  ICF: POST=query, GET=self-documenting template
 ZCL_HTTP_DSL_AUTH            (202)  ICF: client_id/secret → bearer token
+ZCL_HTTP_DSL_CONSOLE                ICF /sap/zdsl/console: browser query page for
+                                    logged-on users; VIEW_AUTHORITY_CHECK per table.
+                                    GET_PAGE_LINES is GENERATED from web/dsl_console.html
+                                    by tools/gen_console_abap.py — edit the HTML, not the ABAP
 ZCL_JSON_DSL_TEST            (434)  ABAP Unit
 ZIF_JSON_DSL_TYPES           (204)  ALL shared types live here — start reading here
 ZCX_DSL_PARSE / ZCX_DSL_SECURITY    exception classes
@@ -299,9 +307,11 @@ from the abapGit log come back here → fix → re-pull.
 ## HTTP contract
 
 ```
-POST /sap/zdsl/query   query execution (bearer token)
-GET  /sap/zdsl/query   returns the expected JSON template (self-documenting)
-POST /sap/zdsl/auth    client_id + client_secret → bearer token
+POST /sap/zdsl/query     query execution (bearer token)
+GET  /sap/zdsl/query     returns the expected JSON template (self-documenting)
+POST /sap/zdsl/auth      client_id + client_secret → bearer token
+GET  /sap/zdsl/console   query console page (SAP logon, no token)
+POST /sap/zdsl/console   run query as the logged-on user (needs X-DSL-Console: 1)
 ```
 
 HTTP status maps from the first error code: 400 PARSE/SEM, 403 WL_ROLE,
@@ -314,7 +324,7 @@ body with `errors` populated — never parse status alone.
 
 | File | What it is |
 |---|---|
-| `sap_json_query_engine_specification.md` | master spec, v1.5 — **~1 version behind the code** |
+| `sap_json_query_engine_specification.md` | master spec, v1.6 (2026-11-16) — matches the code |
 | `docs/dsl-json-reference.md` | caller-facing parameter reference, v1.3 |
 | `sap_dsl_client_installation_guide.md` | client BASIS runbook |
 | `sap_dsl_caller_integration_guide.md` | internal — our app developers |
@@ -328,6 +338,8 @@ body with `errors` populated — never parse status alone.
 
 ```
 src/       all abapGit ABAP objects
+web/       dsl_console.html — source of the /sap/zdsl/console page
+tools/     gen_console_abap.py — regenerates the HTML block in ZCL_HTTP_DSL_CONSOLE
 java/      DslClient.java — zero external dependencies
 python/    dsl_client.py — uses requests
 metrics/   26 GRC KPI JSON payloads (base/ + additional/)

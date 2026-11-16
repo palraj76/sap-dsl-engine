@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSL Query Console</title>
+<style>
+/* Source of the page served by ZCL_HTTP_DSL_CONSOLE at /sap/zdsl/console.
+   Edit this file, then run tools/gen_console_abap.py to regenerate the class.
+   Rules: ASCII only, no line longer than 200 characters. */
+:root {
+  --bg: #EEF2F3; --panel: #FFFFFF; --sunk: #F6F8F9; --ink: #15212A; --muted: #5A6974;
+  --line: #D3DBE0; --accent: #0B6C77; --accent-soft: #DCEEF0; --accent-ink: #FFFFFF;
+  --ok: #1E7341; --ok-bg: #E2F3E8; --warn: #9A5800; --warn-bg: #FBEFD9;
+  --err: #B0261C; --err-bg: #FBE4E1; --info-bg: #E4EEF8; --info: #1F4E7A;
+  --f-ui: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --f-label: "Segoe UI Semibold", "Arial Narrow", Arial, sans-serif;
+  --f-code: Consolas, "Cascadia Mono", "Courier New", monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0E1418; --panel: #151D22; --sunk: #10171B; --ink: #E2E9ED; --muted: #8FA0AB;
+    --line: #27333B; --accent: #43B6C2; --accent-soft: #143A40; --accent-ink: #052326;
+    --ok: #57C985; --ok-bg: #12301F; --warn: #E3A746; --warn-bg: #36280F;
+    --err: #F27A70; --err-bg: #3A1714; --info-bg: #13283B; --info: #8EC1EE; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--f-ui); }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+.top { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line);
+  padding: 10px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand b { font: 600 17px/1 var(--f-label); }
+.brand span { color: var(--muted); font-size: 12px; }
+.sys { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-left: auto; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--line);
+  border-radius: 999px; font: 12px/1.4 var(--f-code); background: var(--sunk); color: var(--muted); white-space: nowrap; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.chip.ok { color: var(--ok); background: var(--ok-bg); border-color: transparent; }
+.chip.ok .dot { background: var(--ok); }
+.chip.warn { color: var(--warn); background: var(--warn-bg); border-color: transparent; }
+.chip.warn .dot { background: var(--warn); }
+.chip.err { color: var(--err); background: var(--err-bg); border-color: transparent; }
+.chip.err .dot { background: var(--err); }
+
+.shell { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; padding: 16px 16px 28px;
+  max-width: 1640px; margin: 0 auto; }
+@media (max-width: 980px) { .shell { grid-template-columns: minmax(0, 1fr); } }
+.rail { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+details.sec { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+details.sec > summary { list-style: none; cursor: pointer; padding: 10px 12px; display: flex; align-items: center; gap: 8px;
+  font: 600 12px/1.2 var(--f-label); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+details.sec > summary::-webkit-details-marker { display: none; }
+details.sec > summary::after { content: "\25BE"; margin-left: auto; }
+details.sec:not([open]) > summary::after { content: "\25B8"; }
+details.sec > summary .chip { text-transform: none; letter-spacing: 0; }
+.sec-body { padding: 2px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field label, .lbl { font-size: 12px; color: var(--muted); }
+.field input[type=text], .field input[type=password], .field input[type=number], .field select {
+  width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--sunk); }
+.field input:focus, .field select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 2px var(--accent-soft); }
+.mono { font-family: var(--f-code); font-size: 12.5px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.hint { font-size: 12px; color: var(--muted); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { text-align: center; padding: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; background: var(--sunk); }
+.seg input:checked + label { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg input:disabled + label { opacity: .45; cursor: not-allowed; }
+.tok { border: 1px dashed var(--line); border-radius: 4px; padding: 8px; display: flex; flex-direction: column; gap: 6px; background: var(--sunk); }
+.tok-line { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.tok code { font: 12px var(--f-code); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--ok); width: 0; }
+.ovr { display: grid; grid-template-columns: 1fr auto; gap: 6px 8px; align-items: center; }
+.ovr .k { font: 12.5px var(--f-code); }
+.tri { display: flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.tri button { border: 0; background: var(--sunk); padding: 2px 7px; font: 11.5px var(--f-code); color: var(--muted); cursor: pointer; }
+.tri button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
+.check input { margin-top: 3px; }
+.hist { margin: 0; padding: 0; list-style: none; }
+.hist li { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: baseline; padding: 6px 0;
+  border-top: 1px solid var(--line); font-size: 12px; }
+.hist li:first-child { border-top: 0; }
+.hist .t { font-family: var(--f-code); color: var(--muted); }
+.hist .q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.hist .f { grid-column: 2 / -1; font: 11.5px var(--f-code); color: var(--muted); overflow-wrap: anywhere; }
+
+.work { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.notice { border-radius: var(--r); padding: 10px 14px; display: flex; gap: 12px; align-items: flex-start; font-size: 13px; }
+.notice b { font-family: var(--f-label); }
+.notice.info { background: var(--info-bg); color: var(--info); }
+.notice.err { background: var(--err-bg); color: var(--err); }
+.notice code { font: 12.5px var(--f-code); }
+.panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 1180px) { .panes { grid-template-columns: minmax(0, 1fr); } }
+.pane { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); display: flex; flex-direction: column; min-width: 0; }
+.pane-h { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.pane-h h2 { margin: 0; font: 600 13px/1 var(--f-label); letter-spacing: .07em; text-transform: uppercase; }
+.sp { flex: 1; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 4px; border: 1px solid var(--line);
+  background: var(--panel); cursor: pointer; font-size: 13px; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.primary:hover { color: var(--accent-ink); filter: brightness(1.08); }
+.btn.big { padding: 9px 18px; font-size: 14px; }
+.kbd { font: 11px var(--f-code); opacity: .8; border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; }
+.editor { display: flex; flex: 1; min-height: 0; }
+textarea.code { flex: 1; width: 100%; min-height: 460px; resize: vertical; border: 0; margin: 0; padding: 12px 14px;
+  font: 13px/1.55 var(--f-code); background: var(--sunk); color: var(--ink); tab-size: 2; white-space: pre; overflow: auto; }
+textarea.code:focus { outline: none; box-shadow: inset 0 0 0 2px var(--accent-soft); }
+.pane-f { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line);
+  font-size: 12px; color: var(--muted); }
+.applied { display: flex; flex-wrap: wrap; gap: 6px; }
+.applied .chip { font-size: 11.5px; padding: 1px 7px; color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+.send { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); display: flex; flex-wrap: wrap;
+  align-items: center; gap: 12px 16px; padding: 10px 12px; }
+.steps { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; min-width: 0; flex: 1; }
+.step { display: flex; align-items: center; gap: 8px; font: 12.5px var(--f-code); color: var(--muted); min-width: 0; }
+.step .det { overflow-wrap: anywhere; }
+.step .n { width: 20px; height: 20px; flex: none; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--line);
+  font-size: 11px; background: var(--sunk); }
+.step.done .n { background: var(--ok); color: var(--panel); border-color: var(--ok); }
+.step.fail .n { background: var(--err); color: var(--panel); border-color: var(--err); }
+.step.run .n { border-color: var(--accent); color: var(--accent); }
+.step .what { color: var(--ink); }
+.summary { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.stat { display: flex; flex-direction: column; gap: 1px; padding: 4px 8px; border-left: 2px solid var(--line); min-width: 70px; }
+.stat .l { font: 600 10.5px/1.2 var(--f-label); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.stat .v { font: 600 14px/1.3 var(--f-code); }
+.status { font: 600 13px/1 var(--f-code); padding: 5px 9px; border-radius: 4px; align-self: center; }
+.status.ok { background: var(--ok-bg); color: var(--ok); }
+.status.err { background: var(--err-bg); color: var(--err); }
+.status.idle { background: var(--sunk); color: var(--muted); border: 1px solid var(--line); }
+.tabs { display: flex; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs button { border: 0; background: none; padding: 8px 10px; font-size: 13px; color: var(--muted); cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.cnt { font: 11px var(--f-code); margin-left: 4px; padding: 0 5px; border-radius: 8px; background: var(--sunk); border: 1px solid var(--line); }
+.cnt.err { background: var(--err-bg); color: var(--err); border-color: transparent; }
+.cnt.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.tabpanel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.scroll { overflow: auto; max-height: 560px; min-height: 460px; background: var(--sunk); }
+table.rows { border-collapse: collapse; width: 100%; font: 12.5px var(--f-code); }
+table.rows th, table.rows td { text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.rows th { position: sticky; top: 0; background: var(--panel); font: 600 11px var(--f-label); letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted); }
+table.rows td.num { text-align: right; }
+.msgs { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.msg { border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 4px; padding: 10px 12px;
+  background: var(--panel); display: flex; flex-direction: column; gap: 6px; }
+.msg.err { border-left-color: var(--err); }
+.msg.warn { border-left-color: var(--warn); }
+.msg .h { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.msg .code { font: 600 12.5px var(--f-code); }
+.msg.err .code { color: var(--err); }
+.msg.warn .code { color: var(--warn); }
+.msg pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--f-code); color: var(--muted);
+  background: var(--sunk); padding: 8px; border-radius: 4px; }
+.empty { padding: 28px 16px; color: var(--muted); text-align: center; font-size: 13px; }
+.cnts { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.cnt-row { display: grid; grid-template-columns: minmax(0, 220px) 1fr auto; gap: 10px; align-items: center; font: 12.5px var(--f-code); }
+.cnt-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cnt-row .b { height: 8px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.cnt-row .b i { display: block; height: 100%; background: var(--accent); }
+.cnt-row.zero .nm, .cnt-row.zero .v { color: var(--err); font-weight: 600; }
+.sql { margin: 0 12px 12px; padding: 10px; border-radius: 4px; background: var(--panel); border: 1px solid var(--line);
+  font: 12px/1.55 var(--f-code); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sub { padding: 12px 12px 0; font: 600 11px var(--f-label); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.toast { position: fixed; right: 16px; bottom: 16px; max-width: min(460px, calc(100vw - 32px)); background: var(--ink);
+  color: var(--panel); padding: 10px 14px; border-radius: 6px; font-size: 13px; box-shadow: 0 6px 24px rgba(0,0,0,.25); z-index: 20; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><b>DSL Query Console</b><span>JSON DSL Engine &middot; /sap/zdsl</span></div>
+  <div class="sys">
+    <span class="chip" id="hdrSys">__DSL_SYSID__ &middot; client __DSL_CLIENT__</span>
+    <span class="chip" id="hdrUser">__DSL_USER__</span>
+    <span class="chip" id="hdrWl">WHITELIST __DSL_WLMODE__</span>
+    <span class="chip warn" id="hdrTok"><span class="dot"></span><span>-</span></span>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="rail" aria-label="Settings">
+    <details class="sec" open>
+      <summary>Run as</summary>
+      <div class="sec-body">
+        <div class="seg" role="radiogroup" aria-label="Run queries as">
+          <input type="radio" name="mode" id="modeUser" value="user" checked><label for="modeUser">My SAP user</label>
+          <input type="radio" name="mode" id="modeTok" value="token"><label for="modeTok">Service client</label>
+        </div>
+        <span class="hint" id="modeHint"></span>
+
+        <div id="tokSettings" class="sec-body" style="padding:0">
+          <div class="field">
+            <label for="base">Endpoint base</label>
+            <input id="base" type="text" class="mono" value="/sap/zdsl" spellcheck="false">
+            <span class="hint">Token from <span class="mono">.../auth</span>, query to <span class="mono">.../query</span></span>
+          </div>
+          <div class="field">
+            <label for="cid">client_id</label>
+            <input id="cid" type="text" class="mono" spellcheck="false" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="csec">client_secret</label>
+            <input id="csec" type="password" class="mono" autocomplete="off">
+          </div>
+          <div class="field">
+            <span class="lbl">Send token in</span>
+            <div class="seg" role="radiogroup" aria-label="Token header">
+              <input type="radio" name="hdr" id="hdrX" value="x" checked><label for="hdrX" class="mono">X-DSL-Token</label>
+              <input type="radio" name="hdr" id="hdrA" value="a"><label for="hdrA" class="mono">Authorization</label>
+            </div>
+          </div>
+          <div class="tok" aria-live="polite">
+            <div class="tok-line"><span class="lbl">Token</span><span class="chip" id="tokState"><span class="dot"></span><span>none</span></span></div>
+            <code id="tokVal">-</code>
+            <div class="bar" aria-hidden="true"><i id="tokBar"></i></div>
+            <div class="tok-line">
+              <label class="check hint"><input type="checkbox" id="autoAuth" checked> Get token automatically</label>
+              <button class="btn" id="btnAuth" type="button">Get token</button>
+            </div>
+            <span class="hint">Kept in page memory only. Reloading the page discards it.</span>
+          </div>
+        </div>
+
+        <div class="row2">
+          <div class="field">
+            <label for="client">sap-client</label>
+            <input id="client" type="text" class="mono" value="__DSL_CLIENT__">
+          </div>
+          <div class="field">
+            <label for="timeout">Timeout (s)</label>
+            <input id="timeout" type="number" class="mono" value="120" min="5" max="900">
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <details class="sec" open>
+      <summary>Request options <span class="chip" id="ovrCount">0 applied</span></summary>
+      <div class="sec-body">
+        <span class="hint">Values set here replace the matching keys in the request when you send it. "as is" leaves the request unchanged.</span>
+        <div class="field">
+          <span class="lbl">output</span>
+          <div id="triList" class="ovr"></div>
+        </div>
+        <div class="field">
+          <span class="lbl">limit</span>
+          <div class="row2">
+            <div class="field"><label for="oRows" class="mono">rows</label><input id="oRows" type="number" class="mono" placeholder="as is" min="1"></div>
+            <div class="field"><label for="oPage" class="mono">page_size</label><input id="oPage" type="number" class="mono" placeholder="as is" min="1"></div>
+          </div>
+          <span class="hint">Above MAX_ROWS_ALLOWED the engine rejects the request (DSL_GUARD_001).</span>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label for="oVer" class="mono">version</label>
+            <select id="oVer" class="mono"><option value="">as is</option><option>1.3</option><option>1.2</option></select>
+          </div>
+          <div class="field">
+            <label for="oQid" class="mono">query_id</label>
+            <input id="oQid" type="text" class="mono" placeholder="as is">
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <details class="sec" open>
+      <summary>Save responses</summary>
+      <div class="sec-body">
+        <label class="check"><input type="checkbox" id="autoSave" checked> Save every response automatically</label>
+        <label class="check"><input type="checkbox" id="saveReq"> Include the sent request in the file</label>
+        <label class="check"><input type="checkbox" id="askWhere"> Ask where to save (Save button, Chrome and Edge)</label>
+        <div class="field">
+          <label for="fname">File name pattern</label>
+          <input id="fname" type="text" class="mono" value="{query_id}_{yyyyMMdd-HHmmss}_{status}.json" spellcheck="false">
+          <span class="hint">Tokens: {query_id} {metricId} {status} {yyyyMMdd-HHmmss}. Automatic saves go to the browser's Downloads folder.</span>
+        </div>
+      </div>
+    </details>
+
+    <details class="sec">
+      <summary>Session history <span class="chip" id="histCount">0</span></summary>
+      <div class="sec-body">
+        <ul class="hist" id="hist"></ul>
+        <div class="hint" id="histEmpty">Runs from this session appear here with the file each one was saved to.</div>
+      </div>
+    </details>
+  </aside>
+
+  <main class="work">
+    <div class="notice info" id="authNotice">
+      <div>
+        <b>Queries run as your SAP user __DSL_USER__.</b>
+        You need display authorization for every table in the request: <code>S_TABU_DIS</code> for the table's
+        authorization group, or <code>S_TABU_NAM</code> for the table itself. The console checks this before it runs a query
+        and stops with <code>DSL_AUTH_006</code> if one is missing. The engine whitelist (mode __DSL_WLMODE__) applies as well.
+      </div>
+    </div>
+    <div class="notice err" id="svcNotice" hidden>
+      <div>
+        <b>This page is running as service user __DSL_USER__, not as a person.</b>
+        The SICF node <code>/sap/zdsl/console</code> has fixed logon data. Remove it so that people log on with their own user.
+        Until then only the service-client mode is available.
+      </div>
+    </div>
+
+    <div class="send">
+      <button class="btn primary big" id="btnSend" type="button">Send request <span class="kbd">Ctrl+Enter</span></button>
+      <div class="steps" aria-live="polite">
+        <div class="step" id="stAuth"><span class="n">1</span><span><span class="what" id="stAuthWhat">Logon</span> <span class="det">-</span></span></div>
+        <div class="step" id="stQry"><span class="n">2</span><span><span class="what">Query</span> <span class="det">-</span></span></div>
+        <div class="step" id="stSave"><span class="n">3</span><span><span class="what">Save</span> <span class="det">-</span></span></div>
+      </div>
+    </div>
+
+    <div class="panes">
+      <section class="pane" aria-label="Request">
+        <div class="pane-h">
+          <h2>Request</h2>
+          <span class="sp"></span>
+          <select class="btn" id="preset" aria-label="Load an example">
+            <option value="">Load example...</option>
+            <option value="template">Engine template (GET /query)</option>
+            <option value="single">Single table: dialog users</option>
+            <option value="join">Join + group: users with many roles</option>
+            <option value="union">Union count: holders of two roles</option>
+            <option value="subq">Subquery: users without any role</option>
+          </select>
+          <button class="btn" id="btnOpen" type="button">Open file...</button>
+          <input type="file" id="file" accept=".json,application/json" hidden>
+          <button class="btn" id="btnFmt" type="button">Format</button>
+        </div>
+        <div class="editor"><textarea id="req" class="code" spellcheck="false" aria-label="Request JSON"></textarea></div>
+        <div class="pane-f">
+          <span id="reqState" class="chip"><span class="dot"></span><span>-</span></span>
+          <span id="reqMode" class="mono"></span>
+          <span class="sp"></span>
+          <div class="applied" id="applied"></div>
+        </div>
+      </section>
+
+      <section class="pane" aria-label="Response">
+        <div class="pane-h">
+          <h2>Response</h2>
+          <span class="sp"></span>
+          <button class="btn" id="btnCopy" type="button" disabled>Copy</button>
+          <button class="btn" id="btnSave" type="button" disabled>Save .json</button>
+        </div>
+        <div class="summary">
+          <span class="status idle" id="httpStatus">Not sent</span>
+          <div class="stat"><span class="l">rows</span><span class="v" id="sRows">-</span></div>
+          <div class="stat"><span class="l">count</span><span class="v" id="sAgg">-</span></div>
+          <div class="stat"><span class="l">strategy</span><span class="v" id="sStrat">-</span></div>
+          <div class="stat"><span class="l">engine time</span><span class="v" id="sTime">-</span></div>
+          <div class="stat"><span class="l">more pages</span><span class="v" id="sMore">-</span></div>
+        </div>
+        <div class="tabs" role="tablist">
+          <button role="tab" aria-selected="true" data-tab="raw">Response JSON</button>
+          <button role="tab" aria-selected="false" data-tab="rows">Rows<span class="cnt" id="cRows">0</span></button>
+          <button role="tab" aria-selected="false" data-tab="msgs">Messages<span class="cnt" id="cMsgs">0</span></button>
+          <button role="tab" aria-selected="false" data-tab="debug">Debug</button>
+          <button role="tab" aria-selected="false" data-tab="sent">Sent request</button>
+        </div>
+        <div class="tabpanel" data-panel="raw">
+          <div class="editor"><textarea id="resp" class="code" readonly spellcheck="false" aria-label="Response JSON"
+            placeholder="The response appears here."></textarea></div>
+        </div>
+        <div class="tabpanel" data-panel="rows" hidden><div class="scroll" id="rowsBox"></div></div>
+        <div class="tabpanel" data-panel="msgs" hidden><div class="scroll"><div class="msgs" id="msgsBox"></div></div></div>
+        <div class="tabpanel" data-panel="debug" hidden><div class="scroll" id="dbgBox"></div></div>
+        <div class="tabpanel" data-panel="sent" hidden>
+          <div class="editor"><textarea id="sent" class="code" readonly spellcheck="false" aria-label="Request as sent"></textarea></div>
+        </div>
+        <div class="pane-f"><span id="saveInfo">Nothing saved yet</span></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+(function () {
+  "use strict";
+  var CFG = { user: "__DSL_USER__", client: "__DSL_CLIENT__", isSvc: "__DSL_ISSVC__" === "X" };
+  var STORE = "zdsl.console.v1";
+  var $ = function (id) { return document.getElementById(id); };
+  var DOT = "\u00b7";
+
+  /* ---------- examples (generic only: our metric catalog never ships to a client system) ---------- */
+  var PRESETS = {
+    single: {
+      version: "1.3", query_id: "DIALOG-USERS",
+      sources: [{ table: "USR02", alias: "u" }],
+      select: [{ field: "u.BNAME", alias: "user" }, { field: "u.TRDAT", alias: "last_logon" }],
+      filters: { logic: "AND", conditions: [{ field: "u.USTYP", op: "IN", value: ["A"] }] },
+      order_by: [{ field: "u.BNAME", direction: "asc" }],
+      limit: { rows: 200, page_size: 50 }
+    },
+    join: {
+      version: "1.3", query_id: "USERS-MANY-ROLES",
+      sources: [{ table: "USR02", alias: "u" }],
+      joins: [{ type: "inner", target: { table: "AGR_USERS", alias: "ru" },
+        on: { logic: "AND", conditions: [{ left: "u.BNAME", op: "=", right: "ru.UNAME" }] } }],
+      select: [{ field: "u.BNAME", alias: "user" }],
+      metrics: [{ type: "count", field: "*", alias: "role_count" }],
+      filters: { logic: "AND", conditions: [{ field: "ru.TO_DAT", op: ">=", param: "asOf" }] },
+      group_by: ["u.BNAME"],
+      having: [{ metric: "role_count", op: ">", value: 20 }],
+      order_by: [{ field: "role_count", direction: "desc" }],
+      limit: { rows: 500 },
+      params: { asOf: "20260101" }
+    },
+    union: {
+      version: "1.3", query_id: "ROLE-HOLDERS",
+      union: { distinct: true, branches: [
+        { sources: [{ table: "AGR_USERS", alias: "a" }], select: [{ field: "a.UNAME", alias: "user" }],
+          filters: { logic: "AND", conditions: [{ field: "a.AGR_NAME", op: "IN", value: ["SAP_ALL"] }] } },
+        { sources: [{ table: "AGR_USERS", alias: "b" }], select: [{ field: "b.UNAME", alias: "user" }],
+          filters: { logic: "AND", conditions: [{ field: "b.AGR_NAME", op: "IN", value: ["SAP_NEW"] }] } }
+      ] },
+      metrics: [{ type: "count", field: "*", alias: "holders" }],
+      output: { include_rows: false, include_aggregates: true }
+    },
+    subq: {
+      version: "1.3", query_id: "USERS-NO-ROLE",
+      sources: [{ table: "USR02", alias: "u" }],
+      select: [{ field: "u.BNAME", alias: "user" }],
+      filters: { logic: "AND", conditions: [
+        { field: "u.USTYP", op: "IN", value: ["A"] },
+        { field: "u.BNAME", op: "NOT IN", subquery: {
+          sources: [{ table: "AGR_USERS", alias: "su" }], select: [{ field: "su.UNAME", alias: "uname" }] } }
+      ] },
+      limit: { rows: 200 }
+    }
+  };
+
+  /* ---------- settings persistence (no secrets, no tokens) ---------- */
+  var KEEP = ["base", "cid", "client", "timeout", "oRows", "oPage", "oVer", "oQid", "fname"];
+  var KEEP_CHK = ["autoAuth", "autoSave", "saveReq", "askWhere"];
+  function loadSettings() {
+    var s = null;
+    try { s = JSON.parse(localStorage.getItem(STORE) || "null"); } catch (e) { s = null; }
+    return s || {};
+  }
+  function saveSettings() {
+    var s = { tri: tri, mode: mode(), hdr: hdrMode(), draft: $("req").value };
+    KEEP.forEach(function (id) { s[id] = $(id).value; });
+    KEEP_CHK.forEach(function (id) { s[id] = $(id).checked; });
+    try { localStorage.setItem(STORE, JSON.stringify(s)); } catch (e) { /* storage blocked: settings just aren't kept */ }
+  }
+  var saved = loadSettings();
+  KEEP.forEach(function (id) { if (saved[id] !== undefined) $(id).value = saved[id]; });
+  KEEP_CHK.forEach(function (id) { if (saved[id] !== undefined) $(id).checked = saved[id]; });
+  if (!saved.client) $("client").value = CFG.client;
+
+  /* ---------- mode ---------- */
+  function mode() { return $("modeTok").checked ? "token" : "user"; }
+  function hdrMode() { return $("hdrA").checked ? "a" : "x"; }
+  if (saved.mode === "token" || CFG.isSvc) $("modeTok").checked = true;
+  if (saved.hdr === "a") $("hdrA").checked = true;
+  if (CFG.isSvc) { $("modeUser").disabled = true; $("svcNotice").hidden = false; }
+  function paintMode() {
+    var tok = mode() === "token";
+    $("tokSettings").hidden = !tok;
+    $("authNotice").hidden = tok || CFG.isSvc;
+    $("stAuthWhat").textContent = tok ? "POST /auth" : "Logon";
+    $("modeHint").textContent = tok
+      ? "Same path as our external application: client_id and secret give a token, the query runs as the client's service user."
+      : "Runs the query directly as you. No token needed; the audit log records your user name.";
+    paintToken();
+  }
+  ["modeUser", "modeTok"].forEach(function (id) { $(id).addEventListener("change", function () { paintMode(); saveSettings(); }); });
+  ["hdrX", "hdrA"].forEach(function (id) { $(id).addEventListener("change", saveSettings); });
+
+  /* ---------- output overrides (as is / true / false) ---------- */
+  var OUT_KEYS = ["include_rows", "include_aggregates", "include_summary", "debug"];
+  var tri = saved.tri || { include_rows: null, include_aggregates: null, include_summary: null, debug: null };
+  OUT_KEYS.forEach(function (k) {
+    var name = document.createElement("span");
+    name.className = "k"; name.textContent = k;
+    var g = document.createElement("div");
+    g.className = "tri"; g.setAttribute("role", "group"); g.setAttribute("aria-label", k);
+    [["as is", null], ["true", true], ["false", false]].forEach(function (p) {
+      var b = document.createElement("button");
+      b.type = "button"; b.textContent = p[0];
+      b.setAttribute("aria-pressed", String(tri[k] === p[1]));
+      b.addEventListener("click", function () {
+        tri[k] = p[1];
+        Array.prototype.forEach.call(g.children, function (x) { x.setAttribute("aria-pressed", "false"); });
+        b.setAttribute("aria-pressed", "true");
+        refreshApplied(); saveSettings();
+      });
+      g.appendChild(b);
+    });
+    $("triList").appendChild(name); $("triList").appendChild(g);
+  });
+  function overrides() {
+    var o = [];
+    OUT_KEYS.forEach(function (k) { if (tri[k] !== null && tri[k] !== undefined) o.push(["output." + k, tri[k]]); });
+    if ($("oRows").value) o.push(["limit.rows", Number($("oRows").value)]);
+    if ($("oPage").value) o.push(["limit.page_size", Number($("oPage").value)]);
+    if ($("oVer").value) o.push(["version", $("oVer").value]);
+    if ($("oQid").value.trim()) o.push(["query_id", $("oQid").value.trim()]);
+    return o;
+  }
+  function applyOverrides(obj) {
+    var out = JSON.parse(JSON.stringify(obj));
+    overrides().forEach(function (p) {
+      var parts = p[0].split("."), cur = out;
+      for (var i = 0; i < parts.length - 1; i++) {
+        if (typeof cur[parts[i]] !== "object" || cur[parts[i]] === null) cur[parts[i]] = {};
+        cur = cur[parts[i]];
+      }
+      cur[parts[parts.length - 1]] = p[1];
+    });
+    return out;
+  }
+  function refreshApplied() {
+    var o = overrides();
+    $("ovrCount").textContent = o.length + " applied";
+    var box = $("applied"); box.innerHTML = "";
+    o.forEach(function (p) {
+      var c = document.createElement("span"); c.className = "chip"; c.textContent = p[0] + " = " + JSON.stringify(p[1]);
+      box.appendChild(c);
+    });
+  }
+  ["oRows", "oPage", "oVer", "oQid"].forEach(function (id) {
+    $(id).addEventListener("input", function () { refreshApplied(); saveSettings(); });
+  });
+  ["base", "cid", "client", "timeout", "fname"].forEach(function (id) { $(id).addEventListener("change", saveSettings); });
+  KEEP_CHK.forEach(function (id) { $(id).addEventListener("change", saveSettings); });
+
+  /* ---------- request editor ---------- */
+  var req = $("req");
+  function setReq(obj) { req.value = JSON.stringify(obj, null, 2); checkReq(); saveSettings(); }
+  function checkReq() {
+    var st = $("reqState"), md = $("reqMode");
+    try {
+      var o = JSON.parse(req.value);
+      st.className = "chip ok"; st.lastChild.textContent = "Valid JSON";
+      var m = o.union ? "union" : o.entity ? "entity" : o.sources ? "raw" : "no source";
+      md.textContent = "v" + (o.version || "?") + " " + DOT + " " + m + " mode";
+      return o;
+    } catch (e) {
+      st.className = "chip err"; st.lastChild.textContent = "Invalid JSON";
+      md.textContent = String(e.message).slice(0, 80);
+      return null;
+    }
+  }
+  var draftTimer;
+  req.addEventListener("input", function () { checkReq(); clearTimeout(draftTimer); draftTimer = setTimeout(saveSettings, 600); });
+  req.addEventListener("keydown", function (e) {
+    if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); req.setRangeText("  ", req.selectionStart, req.selectionEnd, "end"); }
+  });
+  $("preset").addEventListener("change", function (e) {
+    var v = e.target.value; e.target.value = "";
+    if (v === "template") { loadTemplate(); return; }
+    if (PRESETS[v]) setReq(PRESETS[v]);
+  });
+  $("btnFmt").addEventListener("click", function () {
+    var o = checkReq(); if (o) setReq(o); else toast("Fix the JSON first: " + $("reqMode").textContent);
+  });
+  $("btnOpen").addEventListener("click", function () { $("file").click(); });
+  $("file").addEventListener("change", function (e) {
+    var f = e.target.files[0]; if (!f) return;
+    var r = new FileReader();
+    r.onload = function () { req.value = String(r.result); var o = checkReq(); if (o) setReq(o); toast("Loaded " + f.name); };
+    r.readAsText(f); e.target.value = "";
+  });
+  function loadTemplate() {
+    callJson(withClient(base() + "/query"), { method: "GET" }).then(function (r) {
+      if (r.body && r.body.template) { setReq(r.body.template); toast("Loaded the engine's own template"); }
+      else toast("Could not load the template from " + base() + "/query (HTTP " + r.status + ")");
+    });
+  }
+
+  /* ---------- HTTP ---------- */
+  function base() { return $("base").value.replace(/\/+$/, "") || "/sap/zdsl"; }
+  function withClient(url) {
+    var c = $("client").value.trim();
+    return c ? url + (url.indexOf("?") < 0 ? "?" : "&") + "sap-client=" + encodeURIComponent(c) : url;
+  }
+  function timeoutMs() { return Math.max(5, Number($("timeout").value) || 120) * 1000; }
+  function callJson(url, opts) {
+    var ctl = new AbortController(), ms = timeoutMs();
+    var timer = setTimeout(function () { ctl.abort(); }, ms);
+    var t0 = performance.now();
+    var o = { signal: ctl.signal, credentials: "same-origin", cache: "no-store" };
+    Object.keys(opts).forEach(function (k) { o[k] = opts[k]; });
+    return fetch(url, o).then(function (res) {
+      return res.text().then(function (text) {
+        var body = null;
+        try { body = JSON.parse(text); } catch (e) { body = null; }
+        return { status: res.status, body: body, text: text, ms: Math.round(performance.now() - t0) };
+      });
+    }).catch(function (e) {
+      var msg = e && e.name === "AbortError" ? "No answer within " + ms / 1000 + " s" : "Network error: " + e;
+      return { status: 0, body: null, text: msg, ms: Math.round(performance.now() - t0) };
+    }).then(function (r) { clearTimeout(timer); return r; });
+  }
+
+  /* ---------- token (service-client mode) ---------- */
+  var token = null;
+  function tokenValid() { return token !== null && token.exp > Date.now(); }
+  function paintToken() {
+    var st = $("tokState"), hdr = $("hdrTok");
+    if (mode() === "user") {
+      hdr.className = "chip ok"; hdr.lastChild.textContent = "Signed in";
+    } else if (tokenValid()) {
+      var left = Math.max(0, Math.round((token.exp - Date.now()) / 1000));
+      var mmss = String(Math.floor(left / 60)).padStart(2, "0") + ":" + String(left % 60).padStart(2, "0");
+      st.className = "chip ok"; st.lastChild.textContent = "valid " + mmss;
+      hdr.className = "chip ok"; hdr.lastChild.textContent = "Token " + mmss;
+      $("tokVal").textContent = token.value.slice(0, 10) + "..." + token.value.slice(-6);
+      $("tokBar").style.width = (left / token.ttl * 100) + "%";
+    } else {
+      st.className = "chip warn"; st.lastChild.textContent = token ? "expired" : "none";
+      hdr.className = "chip warn"; hdr.lastChild.textContent = token ? "Token expired" : "No token";
+      $("tokVal").textContent = "-"; $("tokBar").style.width = "0";
+    }
+  }
+  setInterval(paintToken, 1000);
+  function getToken() {
+    setStep("stAuth", "run", "requesting...");
+    var body = JSON.stringify({ client_id: $("cid").value.trim(), client_secret: $("csec").value });
+    return callJson(withClient(base() + "/auth"), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: body
+    }).then(function (r) {
+      if (r.status === 200 && r.body && r.body.access_token) {
+        var ttl = Number(r.body.expires_in) || 3600;
+        token = { value: r.body.access_token, exp: Date.now() + ttl * 1000, ttl: ttl };
+        paintToken(); setStep("stAuth", "done", "200 " + DOT + " " + r.ms + " ms");
+        return true;
+      }
+      var code = r.body && r.body.errors && r.body.errors[0] ? r.body.errors[0].code : "";
+      setStep("stAuth", "fail", (r.status || "no answer") + (code ? " " + DOT + " " + code : ""));
+      showResult({ status: r.status, body: r.body, text: r.text }, { auth: true });
+      return false;
+    });
+  }
+  $("btnAuth").addEventListener("click", function () {
+    getToken().then(function (ok) { if (ok) toast("Token issued, valid for " + Math.round(token.ttl / 60) + " minutes"); });
+  });
+  function setStep(id, state, det) {
+    var el = $(id); el.className = "step " + (state || "");
+    el.querySelector(".det").textContent = det;
+  }
+
+  /* ---------- send ---------- */
+  var last = null, busy = false;
+  function send() {
+    if (busy) return;
+    var q0 = checkReq();
+    if (!q0) { toast("The request is not valid JSON: " + $("reqMode").textContent); req.focus(); return; }
+    var q = applyOverrides(q0);
+    var payload = JSON.stringify(q);
+    $("sent").value = JSON.stringify(q, null, 2);
+    busy = true; $("btnSend").disabled = true;
+    setStep("stAuth", "", "-"); setStep("stQry", "", "-"); setStep("stSave", "", "-");
+
+    var run;
+    if (mode() === "user") {
+      setStep("stAuth", "done", CFG.user);
+      run = query(window.location.pathname, { "X-DSL-Console": "1" }, payload, q);
+    } else {
+      var ready = tokenValid() ? Promise.resolve(true)
+        : $("autoAuth").checked ? getToken() : Promise.resolve(false);
+      run = ready.then(function (ok) {
+        if (!ok && !tokenValid()) {
+          if (!$("autoAuth").checked) { setStep("stAuth", "fail", "no token"); toast("Get a token first, or turn on automatic tokens."); }
+          return null;
+        }
+        if (tokenValid()) setStep("stAuth", "done", $("stAuth").querySelector(".det").textContent === "-" ? "token reused" : $("stAuth").querySelector(".det").textContent);
+        var h = hdrMode() === "a" ? { "Authorization": "Bearer " + token.value } : { "X-DSL-Token": token.value };
+        return query(base() + "/query", h, payload, q);
+      });
+    }
+    run.then(function () { busy = false; $("btnSend").disabled = false; },
+             function () { busy = false; $("btnSend").disabled = false; });
+  }
+  function query(url, headers, payload, q) {
+    setStep("stQry", "run", "running...");
+    var h = { "Content-Type": "application/json" };
+    Object.keys(headers).forEach(function (k) { h[k] = headers[k]; });
+    return callJson(withClient(url), { method: "POST", headers: h, body: payload }).then(function (r) {
+      var errs = r.body && r.body.errors ? r.body.errors : [];
+      var tag = r.status ? String(r.status) : "no answer";
+      setStep("stQry", r.status === 200 && !errs.length ? "done" : "fail",
+        tag + " " + DOT + " " + r.ms + " ms" + (errs[0] ? " " + DOT + " " + errs[0].code : ""));
+      if (r.status === 401 && mode() === "token") token = null;
+      last = { status: r.status, body: r.body, text: r.text, sent: q, at: new Date() };
+      showResult(r, {});
+      if ($("autoSave").checked) save(true); else setStep("stSave", "", "not saved");
+    });
+  }
+  $("btnSend").addEventListener("click", send);
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); send(); }
+  });
+
+  /* ---------- render ---------- */
+  function showResult(r, opt) {
+    var b = r.body;
+    var ok = r.status === 200 && b && !(b.errors || []).length;
+    var hs = $("httpStatus");
+    hs.className = "status " + (ok ? "ok" : "err");
+    hs.textContent = r.status ? "HTTP " + r.status + (ok ? " OK" : "") : "No answer";
+    var m = (b && b.meta) || null, d = (b && b.data) || null;
+    $("sRows").textContent = m ? m.row_count : "-";
+    $("sAgg").textContent = d && d.aggregates && d.aggregates.length ? Number(d.aggregates[0].value).toLocaleString() : "-";
+    $("sStrat").textContent = m && m.strategy_used ? m.strategy_used : "-";
+    $("sTime").textContent = m ? m.execution_time_ms + " ms" : "-";
+    $("sMore").textContent = m ? (m.has_more ? "yes" : "no") : "-";
+    $("resp").value = b ? JSON.stringify(b, null, 2) : (r.text || "");
+    $("btnCopy").disabled = false; $("btnSave").disabled = opt.auth === true;
+
+    var rows = d && d.rows ? d.rows : [];
+    $("cRows").textContent = rows.length;
+    var rb = $("rowsBox"); rb.innerHTML = "";
+    if (!rows.length) {
+      rb.innerHTML = '<div class="empty">' + (d && d.aggregates && d.aggregates.length
+        ? "No rows. This request returned the count only (output.include_rows = false)." : "No rows returned.") + "</div>";
+    } else {
+      var cols = Object.keys(rows[0]);
+      var html = '<table class="rows"><thead><tr><th>#</th>';
+      cols.forEach(function (c) { html += "<th>" + esc(c) + "</th>"; });
+      html += "</tr></thead><tbody>";
+      rows.forEach(function (row, i) {
+        html += '<tr><td class="num">' + (i + 1) + "</td>";
+        cols.forEach(function (c) { html += "<td" + (/^-?\d+(\.\d+)?$/.test(row[c]) ? ' class="num"' : "") + ">" + esc(row[c]) + "</td>"; });
+        html += "</tr>";
+      });
+      rb.innerHTML = html + "</tbody></table>";
+    }
+
+    var msgs = [];
+    if (b) {
+      (b.errors || []).forEach(function (e) { msgs.push(["err", e]); });
+      (b.warnings || []).forEach(function (w) { msgs.push(["warn", w]); });
+    } else {
+      msgs.push(["err", { code: r.status ? "HTTP " + r.status : "NO_ANSWER", severity: "ERROR",
+        message: r.status ? "SAP answered with something that is not JSON. If it is a logon page, your session has expired: reload this page."
+                          : r.text, hint: r.status ? String(r.text || "").slice(0, 600) : null }]);
+    }
+    var cm = $("cMsgs"); cm.textContent = msgs.length;
+    cm.className = "cnt" + (msgs.some(function (x) { return x[0] === "err"; }) ? " err" : msgs.length ? " warn" : "");
+    var mb = $("msgsBox"); mb.innerHTML = "";
+    if (!msgs.length) mb.innerHTML = '<div class="empty">No errors or warnings.</div>';
+    msgs.forEach(function (x) {
+      var e = x[1], div = document.createElement("div");
+      div.className = "msg " + x[0];
+      div.innerHTML = '<div class="h"><span class="code">' + esc(e.code) + '</span><span class="chip">' +
+        esc(e.severity || (x[0] === "err" ? "ERROR" : "WARNING")) + "</span>" +
+        (e.table ? '<span class="chip">' + esc(e.table) + "</span>" : "") + "</div>" +
+        "<div>" + esc(e.message) + "</div>" + (e.hint ? "<pre>" + esc(e.hint) + "</pre>" : "");
+      mb.appendChild(div);
+    });
+    selectTab(msgs.some(function (x) { return x[0] === "err"; }) ? "msgs" : "raw");
+
+    var db = $("dbgBox"); db.innerHTML = "";
+    if (!b || !b.debug) {
+      db.innerHTML = '<div class="empty">No debug block. Set output.debug to true under Request options to get the generated SQL ' +
+        "and an unfiltered row count for every table.</div>";
+    } else {
+      var sc = b.debug.source_counts || [];
+      var max = Math.max.apply(null, [1].concat(sc.map(function (s) { return s.row_count; })));
+      var h2 = '<div class="sub">Unfiltered rows per table</div><div class="cnts">';
+      sc.forEach(function (s) {
+        var w = s.row_count <= 0 ? 0 : Math.max(2, Math.log(s.row_count + 1) / Math.log(max + 1) * 100);
+        h2 += '<div class="cnt-row' + (s.row_count === 0 ? " zero" : "") + '"><span class="nm" title="' + esc(s.table) + '">' +
+          esc(s.table) + '</span><span class="b"><i style="width:' + w.toFixed(1) + '%"></i></span><span class="v">' +
+          (s.row_count < 0 ? "count failed" : Number(s.row_count).toLocaleString()) + "</span></div>";
+      });
+      h2 += "</div>";
+      if (sc.some(function (s) { return s.row_count === 0; })) {
+        h2 += '<div class="sub" style="text-transform:none;letter-spacing:0;color:var(--err)">' +
+          "A table is empty. The result is empty because the data is missing, not because of the query.</div>";
+      }
+      h2 += '<div class="sub">Generated SQL ' + DOT + " " + esc(b.debug.strategy) + '</div><pre class="sql">' + esc(b.debug.generated_sql) + "</pre>";
+      db.innerHTML = h2;
+    }
+  }
+  function esc(s) {
+    return String(s === undefined || s === null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c];
+    });
+  }
+
+  /* ---------- tabs ---------- */
+  function selectTab(name) {
+    document.querySelectorAll(".tabs [role=tab]").forEach(function (t) { t.setAttribute("aria-selected", String(t.dataset.tab === name)); });
+    document.querySelectorAll(".tabpanel").forEach(function (p) { p.hidden = p.dataset.panel !== name; });
+  }
+  document.querySelectorAll(".tabs [role=tab]").forEach(function (t) {
+    t.addEventListener("click", function () { selectTab(t.dataset.tab); });
+  });
+
+  /* ---------- save ---------- */
+  function pad(n) { return String(n).padStart(2, "0"); }
+  function fileName() {
+    var d = last.at, b = last.body || {};
+    var stamp = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + "-" + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+    var status = b.errors && b.errors.length ? b.errors[0].code : last.status === 200 ? "OK" : "HTTP" + last.status;
+    var name = $("fname").value
+      .split("{query_id}").join(b.query_id || last.sent.query_id || "query")
+      .split("{metricId}").join(b.metricId || last.sent.metricId || "")
+      .split("{status}").join(status)
+      .split("{yyyyMMdd-HHmmss}").join(stamp);
+    name = name.replace(/[^\w.\-]+/g, "_");
+    return /\.json$/i.test(name) ? name : name + ".json";
+  }
+  function fileContent() {
+    var resp = last.body !== null ? last.body : last.text;
+    if (!$("saveReq").checked) return JSON.stringify(resp, null, 2);
+    return JSON.stringify({ saved_at: last.at.toISOString(), http_status: last.status, request: last.sent, response: resp }, null, 2);
+  }
+  function download(name, content) {
+    var url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
+    var a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  }
+  function save(auto) {
+    if (!last) return;
+    var name = fileName(), content = fileContent();
+    var done = function (finalName) {
+      setStep("stSave", "done", finalName);
+      $("saveInfo").innerHTML = "Saved as <span class=\"mono\">" + esc(finalName) + "</span>" + ($("saveReq").checked ? " (with request)" : "");
+      addHist(finalName);
+      toast((auto ? "Saved " : "Saved ") + finalName);
+    };
+    if (!auto && $("askWhere").checked && window.showSaveFilePicker) {
+      window.showSaveFilePicker({ suggestedName: name, types: [{ description: "JSON", accept: { "application/json": [".json"] } }] })
+        .then(function (h) {
+          return h.createWritable().then(function (w) { return w.write(content).then(function () { return w.close(); }); })
+            .then(function () { done(h.name); });
+        })
+        .catch(function (e) { if (!e || e.name !== "AbortError") { download(name, content); done(name); } });
+      return;
+    }
+    download(name, content); done(name);
+  }
+  $("btnSave").addEventListener("click", function () { save(false); });
+  $("btnCopy").addEventListener("click", function () {
+    var text = $("resp").value;
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { toast("Response copied"); },
+        function () { selectTab("raw"); $("resp").select(); toast("Press Ctrl+C to copy the selected response"); });
+    } else { selectTab("raw"); $("resp").select(); toast("Press Ctrl+C to copy the selected response"); }
+  });
+  function addHist(name) {
+    var b = last.body || {}, ok = last.status === 200 && !(b.errors || []).length;
+    var li = document.createElement("li");
+    li.innerHTML = '<span class="t">' + pad(last.at.getHours()) + ":" + pad(last.at.getMinutes()) + ":" + pad(last.at.getSeconds()) +
+      '</span><span class="q">' + esc(b.query_id || last.sent.query_id || "-") + '</span><span class="chip ' + (ok ? "ok" : "err") +
+      '"><span class="dot"></span>' + esc(ok ? last.status : (b.errors && b.errors[0] ? b.errors[0].code : "HTTP " + last.status)) +
+      '</span><span class="f">' + esc(name) + "</span>";
+    $("hist").insertBefore(li, $("hist").firstChild);
+    $("histEmpty").hidden = true;
+    $("histCount").textContent = $("hist").children.length;
+  }
+
+  /* ---------- toast ---------- */
+  var tt;
+  function toast(msg) {
+    var t = $("toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(tt); tt = setTimeout(function () { t.hidden = true; }, 4000);
+  }
+
+  /* ---------- start ---------- */
+  if (saved.draft) { req.value = saved.draft; checkReq(); } else setReq(PRESETS.single);
+  refreshApplied();
+  paintMode();
+})();
+</script>
+</body>
+</html>

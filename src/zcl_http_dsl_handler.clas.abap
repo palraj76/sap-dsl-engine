@@ -7,6 +7,19 @@ class ZCL_HTTP_DSL_HANDLER definition
 
     interfaces IF_HTTP_EXTENSION .
 
+    " Public so ZCL_HTTP_DSL_CONSOLE returns exactly the same JSON and status codes
+    methods SERIALIZE_RESPONSE
+      importing
+        !IS_RESPONSE type ZIF_JSON_DSL_TYPES=>TY_RESPONSE
+      returning
+        value(RV_JSON) type STRING .
+
+    methods GET_HTTP_STATUS
+      importing
+        !IT_ERRORS type ZTT_DSL_ERROR
+      returning
+        value(RV_STATUS) type I .
+
   private section.
 
     methods VALIDATE_TOKEN
@@ -16,12 +29,6 @@ class ZCL_HTTP_DSL_HANDLER definition
         !EV_VALID type ABAP_BOOL
         !EV_SVC_USER type SYUNAME
         !EV_CLIENT_ID type STRING .
-
-    methods SERIALIZE_RESPONSE
-      importing
-        !IS_RESPONSE type ZIF_JSON_DSL_TYPES=>TY_RESPONSE
-      returning
-        value(RV_JSON) type STRING .
 
     methods SERIALIZE_ERRORS
       importing
@@ -40,12 +47,6 @@ class ZCL_HTTP_DSL_HANDLER definition
         !IO_SERVER type ref to IF_HTTP_SERVER
         !IV_STATUS type I
         !IV_JSON type STRING .
-
-    methods GET_HTTP_STATUS
-      importing
-        !IT_ERRORS type ZTT_DSL_ERROR
-      returning
-        value(RV_STATUS) type I .
 
     methods ESCAPE_JSON_STRING
       importing

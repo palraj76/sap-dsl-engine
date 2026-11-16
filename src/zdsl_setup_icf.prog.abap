@@ -3,10 +3,14 @@
 *& Registers ICF services for the DSL Engine
 *&   /sap/zdsl/auth  → ZCL_HTTP_DSL_AUTH
 *&   /sap/zdsl/query → ZCL_HTTP_DSL_HANDLER
+*&   /sap/zdsl/console → ZCL_HTTP_DSL_CONSOLE  (optional, see P_CONS)
 *&---------------------------------------------------------------------*
 REPORT zdsl_setup_icf.
 
-PARAMETERS: p_unreg TYPE abap_bool AS CHECKBOX DEFAULT ' '.
+PARAMETERS: p_unreg TYPE abap_bool AS CHECKBOX DEFAULT ' ',
+            " Query console for logged-on users. Leave it off on systems where
+            " people should not run ad-hoc queries.
+            p_cons  TYPE abap_bool AS CHECKBOX DEFAULT 'X'.
 
 DATA: ls_icf_serv  TYPE icfservice,
       ls_icf_docu  TYPE icfdocu,
@@ -21,6 +25,7 @@ START-OF-SELECTION.
 
   IF p_unreg = abap_true.
     " ─── Unregister ───
+    PERFORM unregister_service USING 'CONSOLE' 'ZDSL'.
     PERFORM unregister_service USING 'QUERY' 'ZDSL'.
     PERFORM unregister_service USING 'AUTH'  'ZDSL'.
     PERFORM unregister_service USING 'ZDSL'  'SAP'.
@@ -97,11 +102,22 @@ START-OF-SELECTION.
   PERFORM create_service USING lv_zdsl_guid 'QUERY' 'ZCL_HTTP_DSL_HANDLER'
     'DSL Query Execution Endpoint'.
 
+  " ─── Step 5: Create /sap/zdsl/console (optional) ───
+  " Created without logon data, so the standard SAP logon applies and every
+  " query runs as the person who opened the page.
+  IF p_cons = abap_true.
+    PERFORM create_service USING lv_zdsl_guid 'CONSOLE' 'ZCL_HTTP_DSL_CONSOLE'
+      'DSL Query Console (logged-on users)'.
+  ENDIF.
+
   COMMIT WORK.
   WRITE: / ''.
   WRITE: / 'ICF setup complete. Verify in SICF:'.
   WRITE: / '  /sap/zdsl/auth  → ZCL_HTTP_DSL_AUTH'.
   WRITE: / '  /sap/zdsl/query → ZCL_HTTP_DSL_HANDLER'.
+  IF p_cons = abap_true.
+    WRITE: / '  /sap/zdsl/console → ZCL_HTTP_DSL_CONSOLE (must NOT have fixed logon data)'.
+  ENDIF.
   WRITE: / ''.
   WRITE: / 'Test: https://<host>:<port>/sap/zdsl/auth should return 405 (POST only)'.
 

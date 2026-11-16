@@ -1,6 +1,8 @@
 # SAP JSON DSL Engine — JSON Parameter Reference
 
-**Version:** 1.3 | **Last Updated:** 2026-04-07
+**Version:** 1.6 | **Last Updated:** 2026-11-16 | Matches engine specification v1.6
+
+> Keys are **case-sensitive** — write them exactly as shown (`version`, not `Version`).
 
 ---
 
@@ -42,8 +44,8 @@
       ]}
     ]
   },
-  "group_by": ["u.BNAME"],
-  "having": [{"metric": "total", "op": ">", "value": "5"}],
+  "group_by": ["u.BNAME", "ru.AGR_NAME"],
+  "having": [{"metric": "total", "op": ">", "value": 5}],
   "order_by": [{"field": "u.BNAME", "direction": "asc"}],
   "limit": {"rows": 100, "page_size": 50},
   "params": {"cutoff": "20260101"},
@@ -60,11 +62,12 @@
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `version` | string | **Yes** | DSL version. Must be `"1.2"` or `"1.3"` |
-| `select` | array | **Yes** | Fields to retrieve (at least one entry) |
+| `select` | array | **Yes*** | Fields to retrieve (at least one entry). Not used with `union` — each branch has its own `select` |
 | `sources` | array | **Yes*** | Base tables in raw mode |
 | `entity` | string | **Yes*** | Semantic entity name in entity mode |
+| `union` | object | **Yes*** | UNION of single-source branches (see [`union`](#union--union-of-branches)) |
 
-\* One of `sources` or `entity` is required. They are mutually exclusive.
+\* Exactly one of `sources`, `entity` or `union` is required. They are mutually exclusive (`DSL_PARSE_005`). `select` is required unless `union` is used.
 
 ### Top-Level — Optional
 
@@ -75,15 +78,17 @@
 | `filters` | object | No | WHERE conditions as AND/OR condition tree |
 | `group_by` | array | No | GROUP BY field list |
 | `metrics` | array | No | Aggregate functions (COUNT, SUM, etc.) |
-| `having` | array | No | HAVING conditions on metric aliases |
+| `having` | array | No | HAVING conditions on metric aliases (requires `group_by`) |
 | `order_by` | array | No | Sort order. **Mandatory** when using pagination offset |
 | `limit` | object | No | Row limiting and pagination |
 | `params` | object | No | Parameter values for param-referenced filters |
-| `output` | object | No | Controls what the response includes |
+| `output` | object | No | Controls what the response includes; `debug` diagnostics |
+
+Any other top-level key is rejected with `DSL_PARSE_004`.
 
 ### Top-Level — Metadata (pass-through)
 
-These fields are accepted, stored, and returned in the response for tracing/logging purposes.
+These fields are accepted for tracing/logging and do not affect the query. `metricName`, `metricId`, `priority` and `module` are echoed in the response; `description` is accepted but not echoed.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -143,7 +148,8 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 | `op` | string | Operator (usually `"="`) |
 | `right` | string | Right side field: `alias.FIELD` |
 
-- MANDT conditions are included in the JSON but automatically handled by SAP
+- MANDT conditions are **optional**. The engine removes them from the ON clause (SAP applies the client automatically), so include them only for readability
+- Comparing fields of different SAP types (e.g. a DATS date with a DEC15 timestamp) fails at runtime. Return both fields and compare in your application
 - Multiple JOINs are supported (chain: A → B → C)
 
 ---
@@ -167,6 +173,8 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 | `unit_field` | string | No | Companion unit field (for QUANTITY type) |
 
 \* In entity mode, only `alias` is required (field is resolved from entity definition).
+
+The `type` annotation is **informational**. The engine reads each field using its real SAP (DDIC) type, and every value comes back as a JSON string.
 
 **Supported type annotations:**
 
@@ -215,29 +223,56 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 |-------|------|----------|-------------|
 | `field` | string | Yes | Alias-qualified: `alias.FIELDNAME` |
 | `op` | string | Yes | Operator (see table below) |
-| `value` | string/array | One of* | Literal value or array for IN |
-| `param` | string | One of* | Key from `params` block |
+| `value` | string/array | One of* | Literal value, or array for IN / NOT IN / BETWEEN. Max 500 characters per value |
+| `param` | string | One of* | Key from `params` block. Scalar operators only (not IN / BETWEEN) |
+| `subquery` | object | One of* | Nested query for IN / NOT IN (see [Subqueries](#subqueries-in--not-in)) |
 
-\* Use `value` for literal values, `param` for parameterized values. Omit both for IS NULL/IS NOT NULL.
+\* Use `value` for literal values, `param` for parameterized values, `subquery` for IN / NOT IN against another table. Omit all three for IS NULL / IS NOT NULL.
 
 **Supported operators:**
 
 | Operator | Value Type | Example |
 |----------|-----------|---------|
 | `=` | scalar | `"value": "A"` |
-| `!=` | scalar | `"value": "B"` |
+| `!=` | scalar | ⚠️ **Avoid** — rejected by older SAP kernels. Use `"op": "NOT IN", "value": ["B"]` |
 | `>` | scalar | `"value": "100"` |
 | `<` | scalar | `"value": "50"` |
 | `>=` | scalar | `"value": "20260101"` |
 | `<=` | scalar | `"value": "20261231"` |
-| `IN` | array | `"value": ["A", "B", "C"]` |
-| `NOT IN` | array | `"value": ["X", "Y"]` |
+| `IN` | array or subquery | `"value": ["A", "B", "C"]` |
+| `NOT IN` | array or subquery | `"value": ["X", "Y"]` |
 | `IS NULL` | none | No value or param |
 | `IS NOT NULL` | none | No value or param |
 | `BETWEEN` | array(2) | `"value": ["100", "999"]` |
 
 - Nesting depth is unlimited: AND inside OR inside AND, etc.
 - The top-level `filters` must always have `logic` and `conditions`
+- Any other operator (including `<>` and `LIKE`) is rejected with `DSL_SEC_003`
+- Values must be in SAP internal format: dates `"YYYYMMDD"`, timestamps `"YYYYMMDDhhmmss"`, NUMC with leading zeros
+- A flat array instead of a condition tree is still accepted (treated as AND) but returns warning `DSL_DEPR_001`
+
+### Subqueries (IN / NOT IN)
+
+An `IN` or `NOT IN` condition can take a `subquery` instead of a value array. The subquery is a normal query object; `version` may be omitted.
+
+```json
+{
+  "field": "u.BNAME",
+  "op": "NOT IN",
+  "subquery": {
+    "sources": [{"table": "AGR_USERS", "alias": "su"}],
+    "select": [{"field": "su.UNAME", "alias": "uname"}],
+    "filters": {"logic": "AND", "conditions": [
+      {"field": "su.AGR_NAME", "op": "=", "value": "Z_ADMIN"}
+    ]}
+  }
+}
+```
+
+- `select` must contain exactly one field
+- Allowed inside: `sources`, `joins`, `filters`, `group_by`, and its own `params`. `order_by`, `limit`, `having` and `output` are ignored
+- One level only — no subquery inside a subquery
+- A malformed subquery is reported at execution time (`DSL_EXEC_001`), not as a parse error
 
 ---
 
@@ -270,6 +305,9 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 
 - When `metrics` is present, every field in `select` must appear in `group_by`
 - Metric aliases can be used in `having` and `order_by`
+- Metric results come back as **columns in `data.rows`**, keyed by the metric alias (e.g. `{"total": "142"}`). `data.aggregates` is only used by union queries
+- `min` / `max` / `sum` / `avg` on date (DATS) or character fields can fail on some SAP kernels. For latest/earliest dates, return the rows and compute in your application
+- `count_distinct` on releases below 7.40 is not supported (`meta.count_distinct_fallback = true`)
 
 ---
 
@@ -289,15 +327,15 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 
 ```json
 "having": [
-  {"metric": "role_count", "op": ">", "value": "5"}
+  {"metric": "role_count", "op": ">", "value": 5}
 ]
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `metric` | string | Yes | Must match an alias in `metrics` |
-| `op` | string | Yes | Comparison operator |
-| `value` | string/number | Yes | Threshold value |
+| `op` | string | Yes | Comparison operator: `=`, `>`, `<`, `>=`, `<=` |
+| `value` | number | Yes | Threshold value. Inserted unquoted — send a number |
 
 - Only valid when `group_by` is present
 - Filters on aggregated values (after GROUP BY)
@@ -346,6 +384,9 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 2. Next call: `{"rows": 100, "page_size": 50, "page_token": "eyJ..."}` → returns next 50 rows
 3. Repeat until `meta.has_more = false`
 
+- The database read is capped at `offset + page_size` rows; the offset skip happens on the SAP application server
+- `limit`, `order_by` and pagination are **not** applied to union queries
+
 ---
 
 ### `params` — Parameter Binding
@@ -359,9 +400,10 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 ```
 
 - Key-value pairs where keys match `param` references in filter conditions
-- Values are bound safely at execution time (prevents SQL injection)
-- All values are strings — type coercion is handled by the engine
+- Values are inserted as quoted literals with single quotes escaped, which makes them injection-safe
+- All values are strings with no type conversion. Send them in SAP internal format (dates `"YYYYMMDD"`, timestamps `"YYYYMMDDhhmmss"`)
 - Every `param` referenced in filters must have a corresponding entry
+- In a union, each branch has its own `params` block
 
 ---
 
@@ -371,15 +413,17 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 "output": {
   "include_rows": true,
   "include_aggregates": true,
-  "include_summary": false
+  "include_summary": false,
+  "debug": false
 }
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `include_rows` | boolean | true | Include data rows in response |
-| `include_aggregates` | boolean | true | Include aggregate results |
-| `include_summary` | boolean | false | Include total_count in meta |
+| `include_rows` | boolean | true | **Union queries only:** `false` suppresses `data.rows` (needed for the fast CTE count path). Non-union queries always return rows |
+| `include_aggregates` | boolean | true | **Union queries only:** include the union `COUNT(*)` in `data.aggregates` |
+| `include_summary` | boolean | false | Fill `meta.total_count` with the rows read before pagination (otherwise 0) |
+| `debug` | boolean | false | Add a `debug` block: generated SQL, strategy, and unfiltered row count per table. Use to diagnose zero-row results; not for routine polling |
 
 ---
 
@@ -399,7 +443,50 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 - Uses a pre-defined entity from `ZJSON_DSL_ENTITY` table
 - Entity definition contains sources, joins, and field mappings
 - `select` entries reference entity field aliases (not table.FIELD)
-- Cannot be combined with `sources` or `joins`
+- Cannot be combined with `sources`, `joins` or `union`
+- Only `select` aliases are resolved. In `filters`, `group_by` and `order_by` use the physical fields from the entity definition (e.g. `u.USTYP`), otherwise `DSL_SEM_011`
+- Unknown or inactive entity returns `DSL_ENTITY_001`
+
+---
+
+### `union` — UNION of Branches
+
+```json
+{
+  "version": "1.3",
+  "query_id": "M01-total-sod-conflicts",
+  "union": {
+    "distinct": true,
+    "branches": [
+      {"sources": [{"table": "GRACUSERACTVL", "alias": "v"}],
+       "select": [{"field": "v.USERID", "alias": "user_id"},
+                  {"field": "v.RISKID", "alias": "risk_id"}]},
+      {"sources": [{"table": "GRACUSERPRMVL", "alias": "v"}],
+       "select": [{"field": "v.USERID", "alias": "user_id"},
+                  {"field": "v.RISKID", "alias": "risk_id"}]}
+    ]
+  },
+  "metrics": [{"type": "count", "field": "*", "alias": "total_conflicts"}],
+  "output": {"include_rows": false, "include_aggregates": true}
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `union.distinct` | boolean | No | `true` (default) = UNION DISTINCT, duplicates removed; `false` = UNION ALL |
+| `union.branches` | array | Yes | At least 2 branches. Each has `sources` (one table), `select`, optional `filters` and `params` |
+
+- Cannot be combined with `entity`, `sources` or `joins`. Top-level `select` is not used
+- Every branch must have the same number of select columns (`DSL_SEM_013`). **Use identical aliases in every branch** — rows are keyed by each branch's own aliases
+- Branches are single-table: no `joins` inside a branch
+- The only supported top-level metric is `{"type": "count", "field": "*"}` (no `group_by`)
+- `limit`, `order_by`, `having` and pagination are not applied. Every qualifying row is read, so keep branch filters tight
+
+**Execution path** (reported in `meta.strategy_used`):
+- `CTE_UNION` — one database round trip. Used only when: count-only, `include_rows = false`, exactly 2 branches, and the database supports it
+- `INMEMORY_UNION` — everything else. Each branch is read separately and merged on the SAP application server. Can return rows and the count together
+- If the CTE path fails, the engine falls back to in-memory and returns warning `DSL_EXEC_007`
+- ⚠️ Known limitation: the CTE path always counts DISTINCT. For a UNION ALL count, send `include_rows: true` so the in-memory path is used
 
 ---
 
@@ -429,21 +516,33 @@ These fields are accepted, stored, and returned in the response for tracing/logg
     "entity_resolved": null
   },
   "warnings": [],
-  "errors": []
+  "errors": [],
+  "debug": {
+    "generated_sql": "SELECT u~BNAME, ru~AGR_NAME, COUNT(*) FROM USR02 AS u LEFT OUTER JOIN ...",
+    "strategy": "OPEN_SQL",
+    "source_counts": [
+      {"table": "USR02", "row_count": 4210},
+      {"table": "left join:AGR_USERS", "row_count": 18877}
+    ]
+  }
 }
 ```
 
 | Field | Description |
 |-------|-------------|
-| `data.rows` | Array of objects, each key is the select alias |
-| `data.aggregates` | Aggregate-only results (when no GROUP BY) |
+| `data.rows` | Array of objects keyed by select alias, then metric alias. **All values are strings** (`"5"`, not `5`) |
+| `data.aggregates` | Union count only: `[{"alias", "type": "count", "value"}]`. Empty for all other queries |
 | `meta.row_count` | Rows in this page |
+| `meta.total_count` | Rows before pagination when `include_summary = true`, otherwise 0 |
 | `meta.has_more` | true if more pages available |
 | `meta.next_page_token` | Pass to next request for pagination |
-| `meta.execution_time_ms` | SQL execution time |
-| `meta.strategy_used` | OPEN_SQL, NATIVE_SQL, or AMDP |
+| `meta.execution_time_ms` | Execution time in milliseconds |
+| `meta.strategy_used` | `OPEN_SQL`, `CTE_UNION` or `INMEMORY_UNION`. `NATIVE_SQL` / `AMDP` are labels only — those queries still run as Open SQL |
 | `warnings` | Non-fatal issues (guardrail thresholds, deprecations) |
-| `errors` | Fatal issues (query not executed) |
+| `errors` | Fatal issues (query not executed). Each: `code`, `severity`, `message`, `field`, `table`, `hint` |
+| `errors[].hint` | For execution errors: a plain-English cause plus the generated SQL. Read this first when a query fails |
+| `debug` | Only when `output.debug = true`: `generated_sql`, `strategy`, `source_counts` (unfiltered `COUNT(*)` per source, join target and union branch; `-1` = count failed) |
+| `metricName` / `metricId` / `priority` / `module` | Echoed only when sent in the request |
 
 ---
 
@@ -451,13 +550,47 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 
 | Category | Codes | Meaning |
 |----------|-------|---------|
-| `DSL_PARSE_xxx` | 001-006 | Malformed JSON, bad version, missing fields, unknown keys |
-| `DSL_WL_xxx` | TABLE_001, FIELD_002, ROLE_003 | Table/field not whitelisted |
-| `DSL_SEM_xxx` | 001-011 | Semantic issues (GROUP BY, params, aliases, MANDT) |
-| `DSL_SEC_xxx` | 001-004 | Injection defense (patterns, operators, value length) |
-| `DSL_GUARD_xxx` | 001-003 | Guardrail limits (max rows, join count) |
-| `DSL_EXEC_xxx` | 001-007 | Runtime errors (SQL failure, timeout, fallbacks). `007` = CTE union path failed, fell back to in-memory execution |
-| `DSL_DEPR_xxx` | 001-002 | Deprecated syntax (flat arrays) |
+| `DSL_PARSE_xxx` | 001-006 | Malformed JSON, bad version (only "1.2"/"1.3"), missing field, unknown key, entity/sources/union conflict, missing `logic` |
+| `DSL_WL_xxx` | TABLE_001, FIELD_002 | Table / select field not whitelisted (STRICT mode only) |
+| `DSL_SEM_xxx` | 001-005, 009-013 | having/group_by rules, missing params, duplicate aliases, pagination without order_by, IS NULL with value, unqualified field, union branch rules (012, 013) |
+| `DSL_SEC_xxx` | 002-004 | Invalid field/alias characters, operator not allowed, value over 500 chars |
+| `DSL_GUARD_xxx` | 001-003 | 001 = rows over MAX_ROWS_ALLOWED (error); 002/003 = large result / many joins (warnings) |
+| `DSL_EXEC_xxx` | 001, 007 | 001 = SQL runtime error (see `hint`); 007 = CTE union failed, fell back to in-memory (warning) |
+| `DSL_DEPR_xxx` | 001 | Flat filter array (warning) |
+| `DSL_ENTITY_xxx` | 001 | Entity not found or inactive |
+| `DSL_AUTH_xxx` | 001-005 | Auth endpoint: wrong method, missing/invalid credentials. Query endpoint: missing token (004), invalid/expired token (005) |
+
+`DSL_SEM_007` (MANDT required in joins) has been removed. Codes not listed above are reserved and are not returned by the current engine. Full detail: specification §10.
+
+---
+
+## Authentication & HTTP
+
+**1. Get a token:**
+
+```
+POST /sap/zdsl/auth
+{"client_id": "CLIENT_001", "client_secret": "<secret>"}
+
+-> {"access_token": "<token>", "token_type": "Bearer", "expires_in": 3600}
+```
+
+**2. Send queries with the token** in one of these headers:
+- `X-DSL-Token: <token>` (preferred — SAP ICF may consume the `Authorization` header itself)
+- `Authorization: Bearer <token>` (fallback)
+
+On 401, fetch a new token and retry once. Cache tokens until shortly before `expires_in`.
+
+| HTTP | When |
+|------|------|
+| 200 | Success (warnings may be present) |
+| 400 | `DSL_PARSE` / `DSL_SEM` / `DSL_SEC` errors |
+| 401 | Missing, invalid or expired token; bad client credentials |
+| 405 | Wrong HTTP method |
+| 429 | `DSL_GUARD_001` — rows over the system maximum |
+| 500 | `DSL_EXEC_001`, and currently also whitelist / entity errors |
+
+Error responses still carry the full JSON body. Branch on `errors[0].code`, not on the HTTP status.
 
 ---
 
@@ -469,4 +602,4 @@ These fields are accepted, stored, and returned in the response for tracing/logg
 GET https://<host>:<port>/sap/zdsl/query?sap-client=<client>
 ```
 
-Response includes a complete valid example payload.
+Response includes a complete valid example payload. No token required.
