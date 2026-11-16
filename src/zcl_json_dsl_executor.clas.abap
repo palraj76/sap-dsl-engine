@@ -44,13 +44,23 @@ class ZCL_JSON_DSL_EXECUTOR definition
       raising
         ZCX_DSL_PARSE .
 
+    methods EXECUTE_UNION_SUM_COUNT
+      importing
+        !IS_SQL type ZCL_JSON_DSL_BUILDER=>TY_SQL_RESULT
+      returning
+        value(RV_COUNT) type I
+      raising
+        ZCX_DSL_PARSE .
+
     methods EXECUTE_UNION_INMEMORY
       importing
         !IS_QUERY type ZIF_JSON_DSL_TYPES=>TY_QUERY
         !IS_SQL type ZCL_JSON_DSL_BUILDER=>TY_SQL_RESULT
+        !IV_BRANCH_LIMIT type I default 0
       exporting
         !ET_ROWS type ZIF_JSON_DSL_TYPES=>TY_RESULT_ROWS
         !EV_COUNT type I
+        !EV_CAPPED type ABAP_BOOL
       raising
         ZCX_DSL_PARSE .
 
@@ -476,7 +486,18 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
                              THEN ` UNION DISTINCT `
                              ELSE ` UNION ALL ` ).
       DATA(lv_inner) = concat_lines_of( table = lt_branch_sqls sep = lv_sep ).
-      IF is_sql-union_count_only = abap_true.
+      IF is_sql-union_count_only = abap_true AND is_sql-union_distinct = abap_false.
+        " SUM_UNION_ALL: one COUNT(*) per branch, added up
+        CLEAR lt_branch_sqls.
+        LOOP AT is_sql-union_branches INTO DATA(ls_cnt).
+          DATA(lv_cnt) = |SELECT COUNT(*) FROM { ls_cnt-from_clause }|.
+          IF ls_cnt-where_clause IS NOT INITIAL.
+            lv_cnt = lv_cnt && | WHERE { ls_cnt-where_clause }|.
+          ENDIF.
+          APPEND |( { lv_cnt } )| TO lt_branch_sqls.
+        ENDLOOP.
+        rv_sql = concat_lines_of( table = lt_branch_sqls sep = ` + ` ).
+      ELSEIF is_sql-union_count_only = abap_true.
         rv_sql = |WITH +combined AS ( { lv_inner } ) SELECT COUNT(*) FROM +combined|.
       ELSE.
         rv_sql = lv_inner.
@@ -782,15 +803,40 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
   method EXECUTE_UNION.
     " Decide execution path:
-    "   - CTE path: only when caller wants COUNT and explicitly suppresses rows
-    "     (output.include_rows = false). In that case we never need to
-    "     materialize the rows on the app server, so the CTE optimization is
-    "     worth attempting. Requires exactly 2 branches and CTE support.
+    "   - Sum path: count-only UNION ALL with rows suppressed. The count of a
+    "     UNION ALL is the sum of the branch counts, so every branch is counted
+    "     in the database. Any number of branches; no rows are read.
+    "   - CTE path: count-only UNION DISTINCT with rows suppressed
+    "     (output.include_rows = false). Requires exactly 2 branches and CTE
+    "     support. The CTE statement is UNION DISTINCT, so it must never be
+    "     used for distinct = false (it returned the distinct count before).
     "   - In-memory path: every other case (rows wanted, >2 branches, no CTE).
     DATA(lv_branch_count) = lines( is_sql-union_branches ).
     DATA(lv_use_cte) = abap_false.
 
     IF is_sql-union_count_only = abap_true
+       AND is_sql-union_distinct = abap_false
+       AND is_query-output-include_rows = abap_false.
+      DATA(lv_sum) = execute_union_sum_count( is_sql ).
+      cs_response-meta-strategy_used = 'SUM_UNION_ALL'.
+      cs_response-meta-row_count     = 1.
+      DATA lv_alias_sum TYPE string.
+      READ TABLE is_query-metrics INTO DATA(ls_m_sum) INDEX 1.
+      IF sy-subrc = 0 AND ls_m_sum-alias IS NOT INITIAL.
+        lv_alias_sum = ls_m_sum-alias.
+      ELSE.
+        lv_alias_sum = 'total'.
+      ENDIF.
+      APPEND VALUE zif_json_dsl_types=>ty_aggregate(
+        alias = lv_alias_sum
+        type  = 'count'
+        value = |{ lv_sum }|
+      ) TO cs_response-aggregates.
+      RETURN.
+    ENDIF.
+
+    IF is_sql-union_count_only = abap_true
+       AND is_sql-union_distinct = abap_true
        AND is_query-output-include_rows = abap_false
        AND lv_branch_count = 2
        AND zcl_json_dsl_capability=>is_cte_union_supported( ) = abap_true.
@@ -849,7 +895,7 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         severity = 'WARNING'
         " message is CHAR 80 - the cause goes into the unbounded hint
         message  = 'CTE union path failed; fell back to in-memory execution (cause in hint)'
-        hint     = |Cause: { lv_cte_error } | &&
+        hint     = |Cause: { lv_cte_error }. | &&
                    |The in-memory path materialises every qualifying row. | &&
                    |On large tables this risks TSV_TNEW_PAGE_ALLOC_FAILED. | &&
                    |Investigate the CTE failure rather than relying on the fallback.|
@@ -858,11 +904,42 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
     DATA lt_rows  TYPE zif_json_dsl_types=>ty_result_rows.
     DATA lv_inmem_count TYPE i.
+    DATA lv_capped TYPE abap_bool.
+
+    " Row limit. When only rows are wanted, each branch is read with
+    " UP TO <limit> ROWS (DISTINCT for UNION DISTINCT), which still lets the
+    " merged result reach the limit whenever the full union would. A count must
+    " be exact, so when one is requested every qualifying row is read and only
+    " the returned rows are cut to the limit afterwards.
+    DATA lv_branch_limit TYPE i.
+    lv_branch_limit = 0.
+    IF is_query-output-include_rows = abap_true
+       AND NOT ( is_sql-union_count_only = abap_true
+                 AND is_query-output-include_aggregates = abap_true ).
+      lv_branch_limit = is_sql-row_limit.
+    ENDIF.
+
     execute_union_inmemory(
-      EXPORTING is_query = is_query is_sql = is_sql
-      IMPORTING et_rows  = lt_rows  ev_count = lv_inmem_count ).
+      EXPORTING is_query        = is_query
+                is_sql          = is_sql
+                iv_branch_limit = lv_branch_limit
+      IMPORTING et_rows         = lt_rows
+                ev_count        = lv_inmem_count
+                ev_capped       = lv_capped ).
 
     cs_response-meta-strategy_used = 'INMEMORY_UNION'.
+
+    IF is_query-output-include_rows = abap_true AND is_sql-row_limit > 0.
+      IF lines( lt_rows ) > is_sql-row_limit.
+        DATA lv_cut_from TYPE i.
+        lv_cut_from = is_sql-row_limit + 1.
+        DELETE lt_rows FROM lv_cut_from.
+        cs_response-meta-has_more = abap_true.
+      ELSEIF lv_capped = abap_true.
+        " A branch stopped at the limit, so more rows may exist
+        cs_response-meta-has_more = abap_true.
+      ENDIF.
+    ENDIF.
 
     " Emit aggregates when caller has metrics AND wants aggregates (default true).
     IF is_sql-union_count_only = abap_true
@@ -962,10 +1039,43 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
   endmethod.
 
 
+  method EXECUTE_UNION_SUM_COUNT.
+    " COUNT of a UNION ALL = sum of the branch counts. Each branch is counted
+    " in the database with the same FROM / WHERE fragments the in-memory path
+    " uses (old Open SQL syntax), so no rows reach the app server and any
+    " number of branches works.
+    DATA lv_n   TYPE i.
+    DATA lv_idx TYPE i.
+
+    rv_count = 0.
+    LOOP AT is_sql-union_branches INTO DATA(ls_b).
+      lv_idx = lv_idx + 1.
+      DATA(lv_from)  = ls_b-from_clause.
+      DATA(lv_where) = ls_b-where_clause.
+      CLEAR lv_n.
+      TRY.
+          IF lv_where IS NOT INITIAL.
+            SELECT COUNT(*) INTO lv_n FROM (lv_from) WHERE (lv_where).
+          ELSE.
+            SELECT COUNT(*) INTO lv_n FROM (lv_from).
+          ENDIF.
+        CATCH cx_sy_dynamic_osql_error INTO DATA(lx_err).
+          RAISE EXCEPTION TYPE zcx_dsl_parse
+            EXPORTING textid        = zcx_dsl_parse=>gc_malformed_json
+                      mv_error_code = 'DSL_EXEC_001'
+                      mv_attr1      = |Union branch { lv_idx }: { lx_err->get_text( ) }|.
+      ENDTRY.
+      rv_count = rv_count + lv_n.
+    ENDLOOP.
+  endmethod.
+
+
   method EXECUTE_UNION_INMEMORY.
     " Execute each branch as a standalone dynamic SELECT, accumulate rows,
     " then dedup if the union is DISTINCT. Works for any branch count.
     DATA lt_all_rows TYPE zif_json_dsl_types=>ty_result_rows.
+    CLEAR: et_rows, ev_count.
+    ev_capped = abap_false.
 
     LOOP AT is_query-union-branches INTO DATA(ls_br).
       DATA lv_idx TYPE i.
@@ -1023,13 +1133,31 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
       " OLD Open SQL syntax with INTO CORRESPONDING FIELDS — name-based mapping
       " from selected columns to matching components of the DDIC table struct.
+      " UNION DISTINCT reads each branch with DISTINCT: duplicates are removed
+      " in the database instead of being carried to the app server (the
+      " cross-branch dedup below still runs). UP TO 0 ROWS means no limit.
+      DATA lv_up_to TYPE i.
+      lv_up_to = iv_branch_limit.
       TRY.
-          IF lv_where IS NOT INITIAL.
+          IF is_sql-union_distinct = abap_true AND lv_where IS NOT INITIAL.
+            SELECT DISTINCT (lv_fields) INTO CORRESPONDING FIELDS OF TABLE <lt_branch>
+              UP TO lv_up_to ROWS
+              FROM (lv_from) WHERE (lv_where).
+          ELSEIF is_sql-union_distinct = abap_true.
+            SELECT DISTINCT (lv_fields) INTO CORRESPONDING FIELDS OF TABLE <lt_branch>
+              UP TO lv_up_to ROWS
+              FROM (lv_from).
+          ELSEIF lv_where IS NOT INITIAL.
             SELECT (lv_fields) INTO CORRESPONDING FIELDS OF TABLE <lt_branch>
+              UP TO lv_up_to ROWS
               FROM (lv_from) WHERE (lv_where).
           ELSE.
             SELECT (lv_fields) INTO CORRESPONDING FIELDS OF TABLE <lt_branch>
+              UP TO lv_up_to ROWS
               FROM (lv_from).
+          ENDIF.
+          IF lv_up_to > 0 AND lines( <lt_branch> ) >= lv_up_to.
+            ev_capped = abap_true.
           ENDIF.
         CATCH cx_sy_dynamic_osql_error INTO DATA(lx_err).
           RAISE EXCEPTION TYPE zcx_dsl_parse

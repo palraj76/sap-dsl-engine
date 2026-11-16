@@ -47,7 +47,7 @@ or error code the code does not enforce as "Not enforced" / "Reserved":
 
 - **UNION support** — top-level `"union": {"distinct": bool, "branches": [...]}`,
   mutually exclusive with `entity` / `sources` / `joins`
-- **Two union strategies** with runtime selection: `CTE_UNION` and `INMEMORY_UNION`
+- **Three union strategies** with runtime selection: `SUM_UNION_ALL`, `CTE_UNION` and `INMEMORY_UNION`
   (see below). `meta.strategy_used` reports which fired
 - **`output.debug: true`** → response carries a `debug` block with
   `generated_sql`, `strategy`, and per-source / per-join-target / per-union-branch
@@ -61,11 +61,9 @@ or error code the code does not enforce as "Not enforced" / "Reserved":
 - **`DSL_SEM_007` (MANDT-required-in-JOIN) was REMOVED** — it blocked legitimate
   GRAC queries. Spec v1.6 marks it removed. Do not re-add it.
 
-Known open issues are listed in spec §21. The most important: the CTE union path
-always emits `UNION DISTINCT` (it ignores `distinct:false`), and union in-memory
-ignores `limit`.
+Known open issues are listed in spec §21.
 
-`docs/dsl-json-reference.md` and `SAP_JSON_DSL_Engine_Parameter_Reference_v2.docx`
+`docs/dsl-json-reference.md` and `SAP_JSON_DSL_Engine_Parameter_Reference_v3.docx`
 are the caller-facing reference and must be kept in step with the spec.
 
 ---
@@ -117,10 +115,15 @@ process with a tiny `WITH +probe AS (SELECT mandt FROM t000 UNION DISTINCT ...)`
 query against T000, and caches the result. Override via `ZJSON_DSL_CONFIG` key
 `CTE_UNION_MODE` = `AUTO` | `FORCE_ON` | `FORCE_OFF`.
 
-- **`CTE_UNION`** is attempted *only* when: count-only query AND
-  `output.include_rows = false` AND exactly 2 branches AND the probe passed.
-  Any failure falls through to in-memory — never surfaces as an error.
-- **`INMEMORY_UNION`** is everything else: each branch is SELECTed separately,
+- **`SUM_UNION_ALL`**: count-only AND `distinct = false` AND
+  `include_rows = false` → one `SELECT COUNT(*)` per branch, summed. Any branch count.
+- **`CTE_UNION`** is attempted *only* when: count-only query AND `distinct = true`
+  AND `output.include_rows = false` AND exactly 2 branches AND the probe passed.
+  The CTE statement is UNION DISTINCT — never route `distinct = false` to it.
+  Any failure falls through to in-memory, with warning `DSL_EXEC_007`.
+- **`INMEMORY_UNION`** is everything else: each branch is SELECTed separately
+  (`SELECT DISTINCT` for UNION DISTINCT; `UP TO <limit> ROWS` when only rows are
+  wanted — an exact count reads everything, rows are cut afterwards),
   results are concatenated on the app server, and `UNION DISTINCT` dedup is done
   by building a `|`-joined value signature per row into a SORTED UNIQUE table.
   Can return rows and the count together from the same materialized set.

@@ -724,10 +724,12 @@ A top-level `union` replaces `entity` / `sources` / `joins` (mutually exclusive 
 - All branches must have the same number of select columns (`DSL_SEM_013`). Each branch's rows are keyed by **that branch's own** select aliases, and DISTINCT de-duplication compares values by position. **Use identical aliases in every branch**, or the rows array will mix key names
 - **Branches are single-source.** Only the first `sources` entry is used; `joins` are not supported inside a branch. Alias prefixes are stripped (`v.USERID` becomes `USERID`) because there is nothing to disambiguate
 - The only top-level aggregate supported is a single `{"type": "count", "field": "*"}` with no top-level `select` / `group_by`. That is the "count-only" form and the only form eligible for `CTE_UNION`
-- ⚠️ **`limit` is not applied in union mode.** On the in-memory path every qualifying row of every branch is read onto the application server and all of them are returned. `order_by`, `having` and pagination are not applied either. Keep branch filters tight. On large GRC tables an unfiltered in-memory union risks `TSV_TNEW_PAGE_ALLOC_FAILED`
+- **`limit` in union mode (rows).** The returned rows are capped at `limit.page_size` (or `limit.rows`), and `meta.has_more` is set when more may exist. When only rows are wanted, each branch is read with `UP TO <limit> ROWS` (and `SELECT DISTINCT` for UNION DISTINCT), so the merged result still reaches the limit whenever the full union would. When a count is requested as well, the count must be exact, so every qualifying row is read and only the returned rows are cut
+- `order_by`, `having`, `offset` and page tokens are not applied to union results
+- ⚠️ The in-memory path still reads every qualifying row when an exact DISTINCT count is needed and the CTE path cannot be used. Keep branch filters tight; on large GRC tables this risks `TSV_TNEW_PAGE_ALLOC_FAILED`
 - Both rows and the count can be returned in one call (`include_rows: true` + `include_aggregates: true`). That forces the in-memory path
 
-How the engine chooses between `CTE_UNION` and `INMEMORY_UNION` is described in §8.2.
+How the engine chooses between `SUM_UNION_ALL`, `CTE_UNION` and `INMEMORY_UNION` is described in §8.2.
 
 ---
 
@@ -801,7 +803,7 @@ How the engine chooses between `CTE_UNION` and `INMEMORY_UNION` is described in 
 | `limit.offset > 0` and `sy-saprl < 740` | `NATIVE_SQL` | Open SQL (Native SQL executor not built) |
 | ≥ 3 `metrics` and ≥ 2 `group_by` fields | `AMDP` | Open SQL (AMDP executor not built) |
 | Anything else | `OPEN_SQL` | Open SQL |
-| `union` present | `CTE_UNION` or `INMEMORY_UNION` | See §8.2 |
+| `union` present | `SUM_UNION_ALL`, `CTE_UNION` or `INMEMORY_UNION` | See §8.2 |
 
 Callers should treat `NATIVE_SQL` / `AMDP` as "would have escalated". The design table in §8.1 is kept as the target architecture; rules 1–3 and 5 depend on Phase 3 features that don't exist yet.
 
@@ -823,6 +825,8 @@ Callers should treat `NATIVE_SQL` / `AMDP` as "would have escalated". The design
 
 The executor picks one of two paths at runtime. The choice is reported in `meta.strategy_used`.
 
+**`SUM_UNION_ALL`** (since 2026-11-16) — count-only `UNION ALL` (`distinct: false`) with `include_rows = false`, any number of branches. The count of a UNION ALL is the sum of the branch counts, so the engine runs one `SELECT COUNT(*) FROM <branch> WHERE ...` per branch and adds them. No CTE, no rows on the app server.
+
 **`CTE_UNION`** — a single database round trip:
 ```sql
 WITH +combined AS (
@@ -833,13 +837,14 @@ SELECT COUNT(*) FROM (+combined) INTO @lv_count.
 ```
 Attempted **only when all of these hold:**
 1. Count-only query: exactly one metric `{"type":"count","field":"*"}`, no top-level `select` or `group_by`
-2. `output.include_rows = false`
-3. Exactly 2 branches
-4. `ZCL_JSON_DSL_CAPABILITY=>IS_CTE_UNION_SUPPORTED( )` returns true
+2. `distinct: true` (the CTE statement is `UNION DISTINCT`)
+3. `output.include_rows = false`
+4. Exactly 2 branches
+5. `ZCL_JSON_DSL_CAPABILITY=>IS_CTE_UNION_SUPPORTED( )` returns true
 
 The capability check runs a tiny `WITH +probe AS ( SELECT mandt FROM t000 UNION DISTINCT SELECT mandt FROM t000 ) SELECT COUNT(*) ...` once per work process and caches the result. `ZJSON_DSL_CONFIG` key `CTE_UNION_MODE` overrides it: `AUTO` (default, probe), `FORCE_ON`, `FORCE_OFF`.
 
-**`INMEMORY_UNION`** — everything else (rows wanted, more than 2 branches, no CTE support, or CTE failure):
+**`INMEMORY_UNION`** — everything else (rows wanted, DISTINCT count with more than 2 branches, no CTE support, or CTE failure). For `distinct: true` each branch is read with `SELECT DISTINCT`; when only rows are wanted each branch is capped with `UP TO <limit> ROWS` (§5.12):
 - Each branch is SELECTed separately. The work area is the branch table's own DDIC structure, read with `INTO CORRESPONDING FIELDS`
 - Rows are concatenated on the application server
 - For `distinct: true`, duplicates are removed by building a `|`-joined value signature per row into a SORTED UNIQUE table
@@ -847,7 +852,7 @@ The capability check runs a tiny `WITH +probe AS ( SELECT mandt FROM t000 UNION 
 
 **CTE failure is loud, not silent.** If the CTE attempt raises, the engine falls back to in-memory and adds warning **`DSL_EXEC_007`** naming the underlying error. The in-memory path materializes every qualifying row. A silent fall-back into it once hid a broken CTE path for ten commits and risks `TSV_TNEW_PAGE_ALLOC_FAILED` on large tables.
 
-> ⚠️ **Known limitation (v1.6):** the CTE path always emits `UNION DISTINCT`, so a count-only query with `"distinct": false` that takes the CTE path returns the *distinct* count. Until this is fixed, send `distinct: false` with `include_rows: true` (which forces in-memory), or set `CTE_UNION_MODE = FORCE_OFF`.
+> **Fixed 2026-11-16:** the CTE path used to be taken for `distinct: false` as well and returned the *distinct* count. UNION ALL counts now use `SUM_UNION_ALL`; the CTE is used for `distinct: true` only.
 
 ### 8.3 Old vs new Open SQL syntax (v1.6)
 
@@ -1148,7 +1153,7 @@ Defined in `ZJSON_DSL_WHITELIST.json` or custom table `ZJSON_DSL_WL`. Note `MAND
 | `has_more` | boolean | `true` when more pages are available |
 | `next_page_token` | string \| null | Pass to next request `limit.page_token`; `null` on last page |
 | `execution_time_ms` | integer | Wall-clock execution time in milliseconds |
-| `strategy_used` | enum | `OPEN_SQL`, `NATIVE_SQL`, `AMDP` (labels only — see §8.0), `CTE_UNION`, `INMEMORY_UNION` |
+| `strategy_used` | enum | `OPEN_SQL`, `NATIVE_SQL`, `AMDP` (labels only — see §8.0), `SUM_UNION_ALL`, `CTE_UNION`, `INMEMORY_UNION` |
 | `count_distinct_fallback` | boolean | `true` when `count_distinct` is used on a release below 7.40 (§5.6) |
 | `entity_resolved` | string \| null | Entity name if entity mode was used; `null` for raw mode |
 
@@ -1562,11 +1567,11 @@ A browser page served by the SAP system itself, for people who are logged on to 
 - ~~26-KPI GRC metric catalog (`metrics/`) as pure DSL payloads~~ ✅
 
 **Open:**
-- Fix: CTE union path ignores `distinct: false` (§8.2 known limitation)
+- ~~Fix: CTE union path ignores `distinct: false`~~ ✅ 2026-11-16 (`SUM_UNION_ALL`)
 - Fix: `DSL_PARSE_004` / `DSL_PARSE_003` hint text doesn't mention `union` or the metadata keys
 - Decide: map `DSL_WL_*` / `DSL_ENTITY_001` to 403 / 400 instead of 500 (§20.4)
 - Apply the whitelist to filter / join / subquery fields in STRICT mode (§9.1). Needed before a client production go-live
-- Apply `limit` to union in-memory branches (§5.12)
+- ~~Apply `limit` to union in-memory branches~~ ✅ 2026-11-16 (§5.12)
 - Implement or formally drop the reserved codes: `SEM_006`, `SEM_008`, `SEC_001`, `EXEC_002`–`006`, `WL_ROLE_003`, `DEPR_002`
 - Performance baseline: Open SQL vs AMDP on USR02 + AGR_USERS with 100k users
 

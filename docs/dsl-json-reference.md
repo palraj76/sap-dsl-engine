@@ -385,7 +385,7 @@ An `IN` or `NOT IN` condition can take a `subquery` instead of a value array. Th
 3. Repeat until `meta.has_more = false`
 
 - The database read is capped at `offset + page_size` rows; the offset skip happens on the SAP application server
-- `limit`, `order_by` and pagination are **not** applied to union queries
+- For union queries `limit` caps the returned rows; `order_by`, `offset` and page tokens are not applied
 
 ---
 
@@ -480,13 +480,14 @@ An `IN` or `NOT IN` condition can take a `subquery` instead of a value array. Th
 - Every branch must have the same number of select columns (`DSL_SEM_013`). **Use identical aliases in every branch** — rows are keyed by each branch's own aliases
 - Branches are single-table: no `joins` inside a branch
 - The only supported top-level metric is `{"type": "count", "field": "*"}` (no `group_by`)
-- `limit`, `order_by`, `having` and pagination are not applied. Every qualifying row is read, so keep branch filters tight
+- Returned rows are capped at `limit.page_size` (or `limit.rows`); `meta.has_more` is set when more may exist. `order_by`, `having`, `offset` and page tokens are not applied
+- An exact DISTINCT count that cannot use the CTE path reads every qualifying row, so keep branch filters tight
 
 **Execution path** (reported in `meta.strategy_used`):
-- `CTE_UNION` — one database round trip. Used only when: count-only, `include_rows = false`, exactly 2 branches, and the database supports it
+- `SUM_UNION_ALL` — count-only with `distinct: false` and `include_rows = false`: one `COUNT(*)` per branch, added up. Any number of branches
+- `CTE_UNION` — one database round trip. Used only when: count-only, `distinct: true`, `include_rows = false`, exactly 2 branches, and the database supports it
 - `INMEMORY_UNION` — everything else. Each branch is read separately and merged on the SAP application server. Can return rows and the count together
 - If the CTE path fails, the engine falls back to in-memory and returns warning `DSL_EXEC_007`
-- ⚠️ Known limitation: the CTE path always counts DISTINCT. For a UNION ALL count, send `include_rows: true` so the in-memory path is used
 
 ---
 
@@ -537,7 +538,7 @@ An `IN` or `NOT IN` condition can take a `subquery` instead of a value array. Th
 | `meta.has_more` | true if more pages available |
 | `meta.next_page_token` | Pass to next request for pagination |
 | `meta.execution_time_ms` | Execution time in milliseconds |
-| `meta.strategy_used` | `OPEN_SQL`, `CTE_UNION` or `INMEMORY_UNION`. `NATIVE_SQL` / `AMDP` are labels only — those queries still run as Open SQL |
+| `meta.strategy_used` | `OPEN_SQL`, `SUM_UNION_ALL`, `CTE_UNION` or `INMEMORY_UNION`. `NATIVE_SQL` / `AMDP` are labels only — those queries still run as Open SQL |
 | `warnings` | Non-fatal issues (guardrail thresholds, deprecations) |
 | `errors` | Fatal issues (query not executed). Each: `code`, `severity`, `message`, `field`, `table`, `hint` |
 | `errors[].hint` | For execution errors: a plain-English cause plus the generated SQL. Read this first when a query fails |
