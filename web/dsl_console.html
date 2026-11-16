@@ -283,6 +283,7 @@ table.rows td.num { text-align: right; }
       <div class="sec-body">
         <label class="check"><input type="checkbox" id="autoSave" checked> Save every response automatically</label>
         <label class="check"><input type="checkbox" id="saveReq"> Include the sent request in the file</label>
+        <label class="check"><input type="checkbox" id="allPages" checked> Get all pages and save them as one file (follows next_page_token up to limit.rows)</label>
         <label class="check"><input type="checkbox" id="askWhere"> Ask where to save (Save button, Chrome and Edge)</label>
         <div class="field">
           <label for="fname">File name pattern</label>
@@ -452,7 +453,7 @@ table.rows td.num { text-align: right; }
 
   /* ---------- settings persistence (no secrets, no tokens) ---------- */
   var KEEP = ["base", "cid", "client", "timeout", "oRows", "oPage", "oVer", "oQid", "fname"];
-  var KEEP_CHK = ["autoAuth", "autoSave", "saveReq", "askWhere"];
+  var KEEP_CHK = ["autoAuth", "autoSave", "saveReq", "askWhere", "allPages"];
   function loadSettings() {
     var s = null;
     try { s = JSON.parse(localStorage.getItem(STORE) || "null"); } catch (e) { s = null; }
@@ -706,11 +707,60 @@ table.rows td.num { text-align: right; }
     setStep("stQry", "run", "running...");
     var h = { "Content-Type": "application/json" };
     Object.keys(headers).forEach(function (k) { h[k] = headers[k]; });
-    return callJson(withClient(url), { method: "POST", headers: h, body: payload }).then(function (r) {
+    var all = $("allPages").checked, MAX_PAGES = 500;
+    var startPage = page, okPages = 0, rows = [], totalMs = 0, engineMs = 0;
+    var first = null, lastOk = null, failed = null;
+
+    // One page per request; with "all pages" on, follow next_page_token until
+    // the last page (the engine stops at limit.rows) and merge the rows.
+    function step(body) {
+      return callJson(withClient(url), { method: "POST", headers: h, body: body }).then(function (r) {
+        totalMs += r.ms;
+        var errs = r.body && r.body.errors ? r.body.errors : [];
+        if (r.status !== 200 || !r.body || errs.length) { failed = r; return; }
+        okPages++; lastOk = r; if (!first) first = r;
+        rows = rows.concat((r.body.data && r.body.data.rows) || []);
+        var m = r.body.meta || {};
+        engineMs += Number(m.execution_time_ms) || 0;
+        if (all && m.has_more && m.next_page_token && okPages < MAX_PAGES) {
+          setStep("stQry", "run", "page " + (startPage + okPages) + " " + DOT + " " + rows.length + " rows so far...");
+          var nq = JSON.parse(JSON.stringify(q));
+          if (typeof nq.limit !== "object" || nq.limit === null) nq.limit = {};
+          nq.limit.page_token = m.next_page_token;
+          return step(JSON.stringify(nq));
+        }
+      });
+    }
+
+    return step(payload).then(function () {
+      var r;
+      if (!first) {
+        r = failed;                                   // first page failed: show it as it came
+      } else if (okPages === 1 && !failed) {
+        r = first;                                    // a single page
+      } else {
+        var body = JSON.parse(JSON.stringify(first.body));
+        var lm = lastOk.body.meta || {};
+        body.data.rows = rows;
+        body.meta.row_count = rows.length;
+        body.meta.has_more = !!lm.has_more;
+        body.meta.next_page_token = lm.next_page_token || null;
+        body.meta.execution_time_ms = engineMs;
+        body.meta.pages_fetched = okPages;            // added by the console when it merges pages
+        if (failed) {
+          var fe = failed.body && failed.body.errors && failed.body.errors[0];
+          body.warnings = (body.warnings || []).concat([{ code: "CONSOLE_PARTIAL", severity: "WARNING",
+            message: "Page " + (startPage + okPages) + " failed. The rows shown are the pages before it only.",
+            field: null, table: null, hint: fe ? fe.code + ": " + fe.message : "HTTP " + failed.status }]);
+        }
+        r = { status: 200, body: body, text: "", ms: totalMs };
+      }
+      page = startPage + Math.max(okPages, 1) - 1;
       var errs = r.body && r.body.errors ? r.body.errors : [];
-      var tag = r.status ? String(r.status) : "no answer";
-      setStep("stQry", r.status === 200 && !errs.length ? "done" : "fail",
-        tag + " " + DOT + " " + r.ms + " ms" + (errs[0] ? " " + DOT + " " + errs[0].code : ""));
+      var ok = r.status === 200 && !errs.length;
+      setStep("stQry", ok ? "done" : "fail", (r.status || "no answer") + " " + DOT + " " +
+        (okPages > 1 ? okPages + " pages " + DOT + " " + rows.length + " rows " + DOT + " " : "") + totalMs + " ms" +
+        (errs[0] ? " " + DOT + " " + errs[0].code : ""));
       if (r.status === 401 && mode() === "token") token = null;
       last = { status: r.status, body: r.body, text: r.text, sent: q, at: new Date() };
       showResult(r, {});

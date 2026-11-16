@@ -629,6 +629,7 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `      <div class="sec-body">` TO rt_lines.
     APPEND `        <label class="check"><input type="checkbox" id="autoSave" checked> Save every response automatically</label>` TO rt_lines.
     APPEND `        <label class="check"><input type="checkbox" id="saveReq"> Include the sent request in the file</label>` TO rt_lines.
+    APPEND `        <label class="check"><input type="checkbox" id="allPages" checked> Get all pages and save them as one file (follows next_page_token up to limit.rows)</label>` TO rt_lines.
     APPEND `        <label class="check"><input type="checkbox" id="askWhere"> Ask where to save (Save button, Chrome and Edge)</label>` TO rt_lines.
     APPEND `        <div class="field">` TO rt_lines.
     APPEND `          <label for="fname">File name pattern</label>` TO rt_lines.
@@ -798,7 +799,7 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `` TO rt_lines.
     APPEND `  /* ---------- settings persistence (no secrets, no tokens) ---------- */` TO rt_lines.
     APPEND `  var KEEP = ["base", "cid", "client", "timeout", "oRows", "oPage", "oVer", "oQid", "fname"];` TO rt_lines.
-    APPEND `  var KEEP_CHK = ["autoAuth", "autoSave", "saveReq", "askWhere"];` TO rt_lines.
+    APPEND `  var KEEP_CHK = ["autoAuth", "autoSave", "saveReq", "askWhere", "allPages"];` TO rt_lines.
     APPEND `  function loadSettings() {` TO rt_lines.
     APPEND `    var s = null;` TO rt_lines.
     APPEND `    try { s = JSON.parse(localStorage.getItem(STORE) || "null"); } catch (e) { s = null; }` TO rt_lines.
@@ -1052,11 +1053,60 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `    setStep("stQry", "run", "running...");` TO rt_lines.
     APPEND `    var h = { "Content-Type": "application/json" };` TO rt_lines.
     APPEND `    Object.keys(headers).forEach(function (k) { h[k] = headers[k]; });` TO rt_lines.
-    APPEND `    return callJson(withClient(url), { method: "POST", headers: h, body: payload }).then(function (r) {` TO rt_lines.
+    APPEND `    var all = $("allPages").checked, MAX_PAGES = 500;` TO rt_lines.
+    APPEND `    var startPage = page, okPages = 0, rows = [], totalMs = 0, engineMs = 0;` TO rt_lines.
+    APPEND `    var first = null, lastOk = null, failed = null;` TO rt_lines.
+    APPEND `` TO rt_lines.
+    APPEND `    // One page per request; with "all pages" on, follow next_page_token until` TO rt_lines.
+    APPEND `    // the last page (the engine stops at limit.rows) and merge the rows.` TO rt_lines.
+    APPEND `    function step(body) {` TO rt_lines.
+    APPEND `      return callJson(withClient(url), { method: "POST", headers: h, body: body }).then(function (r) {` TO rt_lines.
+    APPEND `        totalMs += r.ms;` TO rt_lines.
+    APPEND `        var errs = r.body && r.body.errors ? r.body.errors : [];` TO rt_lines.
+    APPEND `        if (r.status !== 200 || !r.body || errs.length) { failed = r; return; }` TO rt_lines.
+    APPEND `        okPages++; lastOk = r; if (!first) first = r;` TO rt_lines.
+    APPEND `        rows = rows.concat((r.body.data && r.body.data.rows) || []);` TO rt_lines.
+    APPEND `        var m = r.body.meta || {};` TO rt_lines.
+    APPEND `        engineMs += Number(m.execution_time_ms) || 0;` TO rt_lines.
+    APPEND `        if (all && m.has_more && m.next_page_token && okPages < MAX_PAGES) {` TO rt_lines.
+    APPEND `          setStep("stQry", "run", "page " + (startPage + okPages) + " " + DOT + " " + rows.length + " rows so far...");` TO rt_lines.
+    APPEND `          var nq = JSON.parse(JSON.stringify(q));` TO rt_lines.
+    APPEND `          if (typeof nq.limit !== "object" || nq.limit === null) nq.limit = {};` TO rt_lines.
+    APPEND `          nq.limit.page_token = m.next_page_token;` TO rt_lines.
+    APPEND `          return step(JSON.stringify(nq));` TO rt_lines.
+    APPEND `        }` TO rt_lines.
+    APPEND `      });` TO rt_lines.
+    APPEND `    }` TO rt_lines.
+    APPEND `` TO rt_lines.
+    APPEND `    return step(payload).then(function () {` TO rt_lines.
+    APPEND `      var r;` TO rt_lines.
+    APPEND `      if (!first) {` TO rt_lines.
+    APPEND `        r = failed;                                   // first page failed: show it as it came` TO rt_lines.
+    APPEND `      } else if (okPages === 1 && !failed) {` TO rt_lines.
+    APPEND `        r = first;                                    // a single page` TO rt_lines.
+    APPEND `      } else {` TO rt_lines.
+    APPEND `        var body = JSON.parse(JSON.stringify(first.body));` TO rt_lines.
+    APPEND `        var lm = lastOk.body.meta || {};` TO rt_lines.
+    APPEND `        body.data.rows = rows;` TO rt_lines.
+    APPEND `        body.meta.row_count = rows.length;` TO rt_lines.
+    APPEND `        body.meta.has_more = !!lm.has_more;` TO rt_lines.
+    APPEND `        body.meta.next_page_token = lm.next_page_token || null;` TO rt_lines.
+    APPEND `        body.meta.execution_time_ms = engineMs;` TO rt_lines.
+    APPEND `        body.meta.pages_fetched = okPages;            // added by the console when it merges pages` TO rt_lines.
+    APPEND `        if (failed) {` TO rt_lines.
+    APPEND `          var fe = failed.body && failed.body.errors && failed.body.errors[0];` TO rt_lines.
+    APPEND `          body.warnings = (body.warnings || []).concat([{ code: "CONSOLE_PARTIAL", severity: "WARNING",` TO rt_lines.
+    APPEND `            message: "Page " + (startPage + okPages) + " failed. The rows shown are the pages before it only.",` TO rt_lines.
+    APPEND `            field: null, table: null, hint: fe ? fe.code + ": " + fe.message : "HTTP " + failed.status }]);` TO rt_lines.
+    APPEND `        }` TO rt_lines.
+    APPEND `        r = { status: 200, body: body, text: "", ms: totalMs };` TO rt_lines.
+    APPEND `      }` TO rt_lines.
+    APPEND `      page = startPage + Math.max(okPages, 1) - 1;` TO rt_lines.
     APPEND `      var errs = r.body && r.body.errors ? r.body.errors : [];` TO rt_lines.
-    APPEND `      var tag = r.status ? String(r.status) : "no answer";` TO rt_lines.
-    APPEND `      setStep("stQry", r.status === 200 && !errs.length ? "done" : "fail",` TO rt_lines.
-    APPEND `        tag + " " + DOT + " " + r.ms + " ms" + (errs[0] ? " " + DOT + " " + errs[0].code : ""));` TO rt_lines.
+    APPEND `      var ok = r.status === 200 && !errs.length;` TO rt_lines.
+    APPEND `      setStep("stQry", ok ? "done" : "fail", (r.status || "no answer") + " " + DOT + " " +` TO rt_lines.
+    APPEND `        (okPages > 1 ? okPages + " pages " + DOT + " " + rows.length + " rows " + DOT + " " : "") + totalMs + " ms" +` TO rt_lines.
+    APPEND `        (errs[0] ? " " + DOT + " " + errs[0].code : ""));` TO rt_lines.
     APPEND `      if (r.status === 401 && mode() === "token") token = null;` TO rt_lines.
     APPEND `      last = { status: r.status, body: r.body, text: r.text, sent: q, at: new Date() };` TO rt_lines.
     APPEND `      showResult(r, {});` TO rt_lines.
