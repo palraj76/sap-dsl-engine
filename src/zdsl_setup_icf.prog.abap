@@ -37,7 +37,7 @@ START-OF-SELECTION.
   SELECT SINGLE icf_name icfnodguid FROM icfservice
     INTO (lv_icf_name, lv_parent)
     WHERE icf_name = 'SAP'
-      AND icfparguid = cl_icf_tree=>icfguid_root.
+      AND icfparguid = cl_icf_tree=>if_icf_tree~co_rootguid.
 
   IF sy-subrc <> 0.
     WRITE: / 'ERROR: /sap/ ICF node not found. Check SICF.'.
@@ -190,7 +190,7 @@ FORM unregister_service USING iv_name TYPE clike
     SELECT SINGLE icfnodguid FROM icfservice
       INTO lv_parent
       WHERE icf_name = 'SAP'
-        AND icfparguid = cl_icf_tree=>icfguid_root.
+        AND icfparguid = cl_icf_tree=>if_icf_tree~co_rootguid.
   ELSE.
     SELECT SINGLE icfnodguid FROM icfservice
       INTO lv_parent
