@@ -33,13 +33,12 @@ START-OF-SELECTION.
     RETURN.
   ENDIF.
 
-  " ─── Step 1: Find the /sap/ parent node ───
-  SELECT SINGLE icf_name icfnodguid FROM icfservice
-    INTO (lv_icf_name, lv_parent)
-    WHERE icf_name = 'SAP'
-      AND icfparguid = cl_icf_tree=>if_icf_tree~co_rootguid.
+  " ─── Step 1: Find the /sap/ parent node (root → DEFAULT_HOST → SAP) ───
+  DATA lv_sap_guid TYPE icfnodguid.
+  PERFORM get_sap_node CHANGING lv_sap_guid.
+  lv_parent = lv_sap_guid.
 
-  IF sy-subrc <> 0.
+  IF lv_parent IS INITIAL.
     WRITE: / 'ERROR: /sap/ ICF node not found. Check SICF.'.
     RETURN.
   ENDIF.
@@ -187,10 +186,8 @@ FORM unregister_service USING iv_name TYPE clike
 
   " Find parent
   IF iv_parent_name = 'SAP'.
-    SELECT SINGLE icfnodguid FROM icfservice
-      INTO lv_parent
-      WHERE icf_name = 'SAP'
-        AND icfparguid = cl_icf_tree=>if_icf_tree~co_rootguid.
+    PERFORM get_sap_node CHANGING lv_parent.
+    IF lv_parent IS INITIAL. RETURN. ENDIF.
   ELSE.
     SELECT SINGLE icfnodguid FROM icfservice
       INTO lv_parent
@@ -216,4 +213,27 @@ FORM unregister_service USING iv_name TYPE clike
       WRITE: / |  Deleted { iv_name }|.
     ENDIF.
   ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& The ICF tree is root → DEFAULT_HOST → SAP → ZDSL. The root GUID is the
+*& parent of DEFAULT_HOST, not of SAP, so /sap/ must be found in two steps.
+*&---------------------------------------------------------------------*
+FORM get_sap_node CHANGING cv_guid TYPE icfnodguid.
+
+  DATA lv_host TYPE icfnodguid.
+
+  CLEAR cv_guid.
+  SELECT SINGLE icfnodguid FROM icfservice
+    INTO lv_host
+    WHERE icf_name   = 'DEFAULT_HOST'
+      AND icfparguid = cl_icf_tree=>if_icf_tree~co_rootguid.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE icfnodguid FROM icfservice
+    INTO cv_guid
+    WHERE icf_name   = 'SAP'
+      AND icfparguid = lv_host.
 ENDFORM.
