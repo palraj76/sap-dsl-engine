@@ -639,7 +639,10 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
 
   method BUILD_PAGE_TOKEN.
     " Simple base64-encoded offset: {"offset":50}
-    DATA(lv_json) = |{ '\{' }"offset":{ iv_offset }{ '\}' }|.
+    " Built with backtick literals. The earlier |{ '\{' }...| embedded the text
+    " literal '\{' - no escape inside quotes - so the token said
+    " \{"offset":50\}, could not be parsed back, and every page was page 1.
+    DATA(lv_json) = `{"offset":` && |{ iv_offset }| && `}`.
     " Encode to base64
     DATA lv_xstr TYPE xstring.
     lv_xstr = cl_abap_codepage=>convert_to( lv_json ).
@@ -662,6 +665,8 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
           IMPORTING
             output = lv_xstr.
         lv_json = cl_abap_codepage=>convert_from( lv_xstr ).
+        " Tokens issued before the BUILD_PAGE_TOKEN fix read \{"offset":50\}
+        REPLACE ALL OCCURRENCES OF `\` IN lv_json WITH ``.
 
         " Extract offset value from {"offset":50}
         DATA(lo_parser) = NEW zcl_json_dsl_parser( ).

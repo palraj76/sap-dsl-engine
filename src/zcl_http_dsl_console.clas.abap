@@ -1053,9 +1053,11 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `    setStep("stQry", "run", "running...");` TO rt_lines.
     APPEND `    var h = { "Content-Type": "application/json" };` TO rt_lines.
     APPEND `    Object.keys(headers).forEach(function (k) { h[k] = headers[k]; });` TO rt_lines.
-    APPEND `    var all = $("allPages").checked, MAX_PAGES = 500;` TO rt_lines.
+    APPEND `    var all = $("allPages").checked, MAX_PAGES = 100;` TO rt_lines.
+    APPEND `    var cap = q.limit && Number(q.limit.rows) > 0 ? Number(q.limit.rows) : 0;` TO rt_lines.
     APPEND `    var startPage = page, okPages = 0, rows = [], totalMs = 0, engineMs = 0;` TO rt_lines.
-    APPEND `    var first = null, lastOk = null, failed = null;` TO rt_lines.
+    APPEND `    var first = null, lastOk = null, failed = null, stopped = null;` TO rt_lines.
+    APPEND `    var sentToken = q.limit && q.limit.page_token ? q.limit.page_token : null;` TO rt_lines.
     APPEND `` TO rt_lines.
     APPEND `    // One page per request; with "all pages" on, follow next_page_token until` TO rt_lines.
     APPEND `    // the last page (the engine stops at limit.rows) and merge the rows.` TO rt_lines.
@@ -1064,11 +1066,22 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `        totalMs += r.ms;` TO rt_lines.
     APPEND `        var errs = r.body && r.body.errors ? r.body.errors : [];` TO rt_lines.
     APPEND `        if (r.status !== 200 || !r.body || errs.length) { failed = r; return; }` TO rt_lines.
+    APPEND `        var m = r.body.meta || {};` TO rt_lines.
+    APPEND `        // A follow-up page that hands back the token we just sent is the same` TO rt_lines.
+    APPEND `        // page again (engine did not advance): drop it and stop.` TO rt_lines.
+    APPEND `        if (okPages > 0 && m.has_more && m.next_page_token && m.next_page_token === sentToken) {` TO rt_lines.
+    APPEND `          stopped = "the engine returned the same page again"; return;` TO rt_lines.
+    APPEND `        }` TO rt_lines.
     APPEND `        okPages++; lastOk = r; if (!first) first = r;` TO rt_lines.
     APPEND `        rows = rows.concat((r.body.data && r.body.data.rows) || []);` TO rt_lines.
-    APPEND `        var m = r.body.meta || {};` TO rt_lines.
     APPEND `        engineMs += Number(m.execution_time_ms) || 0;` TO rt_lines.
-    APPEND `        if (all && m.has_more && m.next_page_token && okPages < MAX_PAGES) {` TO rt_lines.
+    APPEND `        if (all && m.has_more && m.next_page_token) {` TO rt_lines.
+    APPEND `          // Guards: never loop on an engine that does not advance` TO rt_lines.
+    APPEND `          var got = (r.body.data && r.body.data.rows) ? r.body.data.rows.length : 0;` TO rt_lines.
+    APPEND `          if (got === 0) { stopped = "a page came back empty although has_more was true"; return; }` TO rt_lines.
+    APPEND `          if (cap && rows.length >= cap) { stopped = null; return; }` TO rt_lines.
+    APPEND `          if (okPages >= MAX_PAGES) { stopped = "the console stops after " + MAX_PAGES + " pages"; return; }` TO rt_lines.
+    APPEND `          sentToken = m.next_page_token;` TO rt_lines.
     APPEND `          setStep("stQry", "run", "page " + (startPage + okPages) + " " + DOT + " " + rows.length + " rows so far...");` TO rt_lines.
     APPEND `          var nq = JSON.parse(JSON.stringify(q));` TO rt_lines.
     APPEND `          if (typeof nq.limit !== "object" || nq.limit === null) nq.limit = {};` TO rt_lines.
@@ -1082,7 +1095,7 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `      var r;` TO rt_lines.
     APPEND `      if (!first) {` TO rt_lines.
     APPEND `        r = failed;                                   // first page failed: show it as it came` TO rt_lines.
-    APPEND `      } else if (okPages === 1 && !failed) {` TO rt_lines.
+    APPEND `      } else if (okPages === 1 && !failed && !stopped) {` TO rt_lines.
     APPEND `        r = first;                                    // a single page` TO rt_lines.
     APPEND `      } else {` TO rt_lines.
     APPEND `        var body = JSON.parse(JSON.stringify(first.body));` TO rt_lines.
@@ -1093,6 +1106,11 @@ CLASS ZCL_HTTP_DSL_CONSOLE IMPLEMENTATION.
     APPEND `        body.meta.next_page_token = lm.next_page_token || null;` TO rt_lines.
     APPEND `        body.meta.execution_time_ms = engineMs;` TO rt_lines.
     APPEND `        body.meta.pages_fetched = okPages;            // added by the console when it merges pages` TO rt_lines.
+    APPEND `        if (stopped) {` TO rt_lines.
+    APPEND `          body.warnings = (body.warnings || []).concat([{ code: "CONSOLE_STOPPED", severity: "WARNING",` TO rt_lines.
+    APPEND `            message: "Stopped fetching pages: " + stopped + ".", field: null, table: null,` TO rt_lines.
+    APPEND `            hint: "The rows shown are the pages fetched so far. If the engine repeats pages, its ZCL_JSON_DSL_EXECUTOR is out of date." }]);` TO rt_lines.
+    APPEND `        }` TO rt_lines.
     APPEND `        if (failed) {` TO rt_lines.
     APPEND `          var fe = failed.body && failed.body.errors && failed.body.errors[0];` TO rt_lines.
     APPEND `          body.warnings = (body.warnings || []).concat([{ code: "CONSOLE_PARTIAL", severity: "WARNING",` TO rt_lines.

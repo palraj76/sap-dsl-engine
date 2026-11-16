@@ -707,9 +707,11 @@ table.rows td.num { text-align: right; }
     setStep("stQry", "run", "running...");
     var h = { "Content-Type": "application/json" };
     Object.keys(headers).forEach(function (k) { h[k] = headers[k]; });
-    var all = $("allPages").checked, MAX_PAGES = 500;
+    var all = $("allPages").checked, MAX_PAGES = 100;
+    var cap = q.limit && Number(q.limit.rows) > 0 ? Number(q.limit.rows) : 0;
     var startPage = page, okPages = 0, rows = [], totalMs = 0, engineMs = 0;
-    var first = null, lastOk = null, failed = null;
+    var first = null, lastOk = null, failed = null, stopped = null;
+    var sentToken = q.limit && q.limit.page_token ? q.limit.page_token : null;
 
     // One page per request; with "all pages" on, follow next_page_token until
     // the last page (the engine stops at limit.rows) and merge the rows.
@@ -718,11 +720,22 @@ table.rows td.num { text-align: right; }
         totalMs += r.ms;
         var errs = r.body && r.body.errors ? r.body.errors : [];
         if (r.status !== 200 || !r.body || errs.length) { failed = r; return; }
+        var m = r.body.meta || {};
+        // A follow-up page that hands back the token we just sent is the same
+        // page again (engine did not advance): drop it and stop.
+        if (okPages > 0 && m.has_more && m.next_page_token && m.next_page_token === sentToken) {
+          stopped = "the engine returned the same page again"; return;
+        }
         okPages++; lastOk = r; if (!first) first = r;
         rows = rows.concat((r.body.data && r.body.data.rows) || []);
-        var m = r.body.meta || {};
         engineMs += Number(m.execution_time_ms) || 0;
-        if (all && m.has_more && m.next_page_token && okPages < MAX_PAGES) {
+        if (all && m.has_more && m.next_page_token) {
+          // Guards: never loop on an engine that does not advance
+          var got = (r.body.data && r.body.data.rows) ? r.body.data.rows.length : 0;
+          if (got === 0) { stopped = "a page came back empty although has_more was true"; return; }
+          if (cap && rows.length >= cap) { stopped = null; return; }
+          if (okPages >= MAX_PAGES) { stopped = "the console stops after " + MAX_PAGES + " pages"; return; }
+          sentToken = m.next_page_token;
           setStep("stQry", "run", "page " + (startPage + okPages) + " " + DOT + " " + rows.length + " rows so far...");
           var nq = JSON.parse(JSON.stringify(q));
           if (typeof nq.limit !== "object" || nq.limit === null) nq.limit = {};
@@ -736,7 +749,7 @@ table.rows td.num { text-align: right; }
       var r;
       if (!first) {
         r = failed;                                   // first page failed: show it as it came
-      } else if (okPages === 1 && !failed) {
+      } else if (okPages === 1 && !failed && !stopped) {
         r = first;                                    // a single page
       } else {
         var body = JSON.parse(JSON.stringify(first.body));
@@ -747,6 +760,11 @@ table.rows td.num { text-align: right; }
         body.meta.next_page_token = lm.next_page_token || null;
         body.meta.execution_time_ms = engineMs;
         body.meta.pages_fetched = okPages;            // added by the console when it merges pages
+        if (stopped) {
+          body.warnings = (body.warnings || []).concat([{ code: "CONSOLE_STOPPED", severity: "WARNING",
+            message: "Stopped fetching pages: " + stopped + ".", field: null, table: null,
+            hint: "The rows shown are the pages fetched so far. If the engine repeats pages, its ZCL_JSON_DSL_EXECUTOR is out of date." }]);
+        }
         if (failed) {
           var fe = failed.body && failed.body.errors && failed.body.errors[0];
           body.warnings = (body.warnings || []).concat([{ code: "CONSOLE_PARTIAL", severity: "WARNING",
