@@ -187,6 +187,23 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
         ) TO rs_response-errors.
         RETURN.
 
+      CATCH zcx_dsl_parse INTO DATA(lx_dsl).
+        " Raised by our own execution helpers (union path) with the real cause in
+        " MV_ATTR1. Report that text directly: GET_TEXT( ) would wrap it in the
+        " parse-error template ("JSON is malformed: ..."), which is wrong here.
+        DATA(lv_sql_text_c) = build_dynamic_select( is_sql ).
+        DATA(lv_msg_c) = lx_dsl->mv_attr1.
+        IF lv_msg_c IS INITIAL.
+          lv_msg_c = lx_dsl->get_text( ).
+        ENDIF.
+        APPEND VALUE zst_dsl_error(
+          code     = 'DSL_EXEC_001'
+          severity = 'ERROR'
+          message  = lv_msg_c
+          hint     = enrich_hint( iv_message = lv_msg_c iv_sql = lv_sql_text_c )
+        ) TO rs_response-errors.
+        RETURN.
+
       CATCH cx_root INTO DATA(lx_any).
         DATA(lv_sql_text_b) = build_dynamic_select( is_sql ).
         APPEND VALUE zst_dsl_error(
@@ -444,7 +461,12 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
     IF is_sql-is_union = abap_true.
       DATA lt_branch_sqls TYPE string_table.
       LOOP AT is_sql-union_branches INTO DATA(ls_br).
-        DATA(lv_part) = |SELECT { ls_br-select_clause } FROM { ls_br-from_clause }|.
+        " Show the field list the way each path executes it: comma-separated in
+        " the CTE (strict syntax), space-separated in the in-memory branch SELECTs.
+        DATA(lv_part) = COND string(
+          WHEN is_sql-union_count_only = abap_true
+          THEN |SELECT { ls_br-select_clause_csv } FROM { ls_br-from_clause }|
+          ELSE |SELECT { ls_br-select_clause } FROM { ls_br-from_clause }| ).
         IF ls_br-where_clause IS NOT INITIAL.
           lv_part = lv_part && | WHERE { ls_br-where_clause }|.
         ENDIF.
@@ -785,7 +807,12 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
           lv_count = execute_union_cte_count( is_sql ).
         CATCH zcx_dsl_parse INTO DATA(lx_cte).
           lv_cte_failed = abap_true.
-          lv_cte_error  = lx_cte->get_text( ).
+          " MV_ATTR1 holds the database's own text; GET_TEXT( ) adds the
+          " misleading "JSON is malformed:" template around it
+          lv_cte_error  = lx_cte->mv_attr1.
+          IF lv_cte_error IS INITIAL.
+            lv_cte_error = lx_cte->get_text( ).
+          ENDIF.
         CATCH cx_root INTO DATA(lx_cte_any).
           lv_cte_failed = abap_true.
           lv_cte_error  = lx_cte_any->get_text( ).
@@ -820,10 +847,12 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
       APPEND VALUE zst_dsl_error(
         code     = 'DSL_EXEC_007'
         severity = 'WARNING'
-        message  = |CTE union path failed, fell back to in-memory execution: { lv_cte_error }|
-        hint     = 'The in-memory path materialises every qualifying row. ' &&
-                   'On large tables this risks TSV_TNEW_PAGE_ALLOC_FAILED. ' &&
-                   'Investigate the CTE failure rather than relying on the fallback.'
+        " message is CHAR 80 - the cause goes into the unbounded hint
+        message  = 'CTE union path failed; fell back to in-memory execution (cause in hint)'
+        hint     = |Cause: { lv_cte_error } | &&
+                   |The in-memory path materialises every qualifying row. | &&
+                   |On large tables this risks TSV_TNEW_PAGE_ALLOC_FAILED. | &&
+                   |Investigate the CTE failure rather than relying on the fallback.|
       ) TO cs_response-warnings.
     ENDIF.
 
@@ -1117,6 +1146,12 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
       rv_hint = |Generated SQL: { iv_sql }|.
     ELSE.
       rv_hint = concat_lines_of( table = lt_hints sep = | | ) && | | && |Generated SQL: { iv_sql }|.
+    ENDIF.
+
+    " The error's message field is CHAR 80, so a long database error is cut
+    " off there. Repeat the full text at the start of the (unbounded) hint.
+    IF strlen( iv_message ) > 80.
+      rv_hint = |Full error: { iv_message } | && rv_hint.
     ENDIF.
   endmethod.
 
