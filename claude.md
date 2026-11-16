@@ -177,6 +177,12 @@ qualifying row is how a working system dumps with `TSV_TNEW_PAGE_ALLOC_FAILED`.
   earlier workaround, RTTI lookup is the current correct answer. Wrap the DDIC
   lookup in TRY/CATCH — unknown tables/fields must not dump.
 - Union branches use the **DDIC table structure + `INTO CORRESPONDING`**.
+- **Never call `CL_ABAP_TYPEDESCR=>DESCRIBE_BY_NAME` inline inside an expression**
+  (e.g. inside `CAST ...( )`). It signals an unknown name with the *classic*
+  exception `TYPE_NOT_FOUND`, which `CATCH cx_root` cannot catch there → short
+  dump `RAISE_EXCEPTION`. Call it standalone with `EXCEPTIONS type_not_found = 1`
+  (union path), or check DD03L first (field path). Found when a GRAC metric ran
+  on a system without GRC tables.
 - `MIN`/`MAX`/`SUM`/`AVG` on `DATS` or `CHAR` throws a type error on some kernels.
   Return raw rows; let the caller compute.
 - Cross-type field-vs-field comparison (DATS char-8 vs DEC15 timestamp) is rejected.

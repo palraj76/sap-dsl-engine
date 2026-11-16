@@ -952,11 +952,30 @@ CLASS ZCL_JSON_DSL_EXECUTOR IMPLEMENTATION.
       IF sy-subrc <> 0. CONTINUE. ENDIF.
 
       DATA lr_table TYPE REF TO data.
+      DATA lo_descr  TYPE REF TO cl_abap_typedescr.
       DATA lo_struct TYPE REF TO cl_abap_structdescr.
       DATA lo_table  TYPE REF TO cl_abap_tabledescr.
+
+      " DESCRIBE_BY_NAME reports an unknown name with the classic exception
+      " TYPE_NOT_FOUND. CATCH cx_root cannot intercept that when the method is
+      " called inside an expression, so a missing table dumped (RAISE_EXCEPTION).
+      " Call it with EXCEPTIONS so a missing table becomes a normal DSL_EXEC_001.
+      CLEAR lo_descr.
+      cl_abap_typedescr=>describe_by_name(
+        EXPORTING  p_name         = ls_src-table
+        RECEIVING  p_descr_ref    = lo_descr
+        EXCEPTIONS type_not_found = 1
+                   OTHERS         = 2 ).
+      IF sy-subrc <> 0 OR lo_descr IS NOT BOUND
+         OR lo_descr->kind <> cl_abap_typedescr=>kind_struct.
+        RAISE EXCEPTION TYPE zcx_dsl_parse
+          EXPORTING textid        = zcx_dsl_parse=>gc_malformed_json
+                    mv_error_code = 'DSL_EXEC_001'
+                    mv_attr1      = |Table { ls_src-table } does not exist in this system (union branch { lv_idx })|.
+      ENDIF.
+
       TRY.
-          lo_struct = CAST cl_abap_structdescr(
-            cl_abap_typedescr=>describe_by_name( ls_src-table ) ).
+          lo_struct = CAST cl_abap_structdescr( lo_descr ).
           lo_table  = cl_abap_tabledescr=>create( lo_struct ).
           CREATE DATA lr_table TYPE HANDLE lo_table.
         CATCH cx_root INTO DATA(lx_rtti).
