@@ -1,9 +1,12 @@
 *&---------------------------------------------------------------------*
 *& Report ZDSL_SETUP_ICF
 *& Registers ICF services for the DSL Engine
-*&   /sap/zdsl/auth  → ZCL_HTTP_DSL_AUTH
-*&   /sap/zdsl/query → ZCL_HTTP_DSL_HANDLER
+*&   /sap/zdsl/auth    → ZCL_HTTP_DSL_AUTH
+*&   /sap/zdsl/query   → ZCL_HTTP_DSL_HANDLER
 *&   /sap/zdsl/console → ZCL_HTTP_DSL_CONSOLE  (optional, see P_CONS)
+*& Nodes that already exist are left untouched. New nodes are created with
+*& CL_ICF_TREE=>INSERT_NODE, active, in package ZDL_JSON_DSL; the method asks
+*& for a transport request.
 *&---------------------------------------------------------------------*
 REPORT zdsl_setup_icf.
 
@@ -12,108 +15,54 @@ PARAMETERS: p_unreg TYPE abap_bool AS CHECKBOX DEFAULT ' ',
             " people should not run ad-hoc queries.
             p_cons  TYPE abap_bool AS CHECKBOX DEFAULT 'X'.
 
-DATA: ls_icf_serv  TYPE icfservice,
-      ls_icf_docu  TYPE icfdocu,
-      lv_parent    TYPE icfparguid,
-      lv_nodeguid  TYPE icfnodguid,
-      lv_icf_name  TYPE icfname,
-      lt_handlertab TYPE icfhandtbl,
-      ls_handler   LIKE LINE OF lt_handlertab,
-      lv_url       TYPE string.
+CONSTANTS gc_package TYPE devclass VALUE 'ZDL_JSON_DSL'.
 
 START-OF-SELECTION.
 
   IF p_unreg = abap_true.
-    " ─── Unregister ───
-    PERFORM unregister_service USING 'CONSOLE' 'ZDSL'.
-    PERFORM unregister_service USING 'QUERY' 'ZDSL'.
-    PERFORM unregister_service USING 'AUTH'  'ZDSL'.
-    PERFORM unregister_service USING 'ZDSL'  'SAP'.
-    WRITE: / 'ICF services unregistered. Deactivate manually in SICF if needed.'.
+    " Deleting ICF nodes is left to SICF on purpose: it is rare, needs a
+    " transport, and SICF shows exactly what is removed.
+    WRITE: / 'To remove the DSL services, open SICF → default_host/sap/zdsl'.
+    WRITE: / 'and delete CONSOLE, QUERY and AUTH (then ZDSL) with right-click → Delete Service.'.
     RETURN.
   ENDIF.
 
   " ─── Step 1: Find the /sap/ parent node (root → DEFAULT_HOST → SAP) ───
   DATA lv_sap_guid TYPE icfnodguid.
   PERFORM get_sap_node CHANGING lv_sap_guid.
-  lv_parent = lv_sap_guid.
-
-  IF lv_parent IS INITIAL.
-    WRITE: / 'ERROR: /sap/ ICF node not found. Check SICF.'.
+  IF lv_sap_guid IS INITIAL.
+    WRITE: / 'ERROR: /sap/ ICF node not found under DEFAULT_HOST. Check SICF.'.
     RETURN.
   ENDIF.
-  WRITE: / 'Found /sap/ node:', lv_parent.
+  WRITE: / 'Found /sap/ node:', lv_sap_guid.
 
-  " ─── Step 2: Create /sap/zdsl/ node ───
+  " ─── Step 2: /sap/zdsl/ (container node, no handler) ───
   DATA lv_zdsl_guid TYPE icfnodguid.
-
-  SELECT SINGLE icfnodguid FROM icfservice
-    INTO lv_zdsl_guid
-    WHERE icf_name = 'ZDSL'
-      AND icfparguid = lv_parent.
-
-  IF sy-subrc <> 0.
-    " Create the zdsl node
-    CLEAR: ls_icf_serv, ls_icf_docu.
-    ls_icf_serv-icf_name     = 'ZDSL'.
-    ls_icf_serv-icfparguid   = lv_parent.
-    ls_icf_serv-icf_cclnt    = 0.
-    ls_icf_serv-icf_mclnt    = sy-mandt.
-    ls_icf_docu-icf_docu     = 'DSL Engine Root Service'.
-
-    CLEAR lt_handlertab.
-
-    CALL FUNCTION 'ICFSERVICE_CREATE'
-      EXPORTING
-        icf_service   = ls_icf_serv
-        icfdocu       = ls_icf_docu
-        handlertable  = lt_handlertab
-        icfactive     = 'X'
-        package       = 'ZDL_JSON_DSL'
-      IMPORTING
-        icfnodeguid   = lv_zdsl_guid
-      EXCEPTIONS
-        already_exists = 1
-        OTHERS         = 2.
-
-    IF sy-subrc = 0.
-      WRITE: / 'Created /sap/zdsl/ node:', lv_zdsl_guid.
-    ELSEIF sy-subrc = 1.
-      " Already exists, try to retrieve it
-      SELECT SINGLE icfnodguid FROM icfservice
-        INTO lv_zdsl_guid
-        WHERE icf_name = 'ZDSL'
-          AND icfparguid = lv_parent.
-      WRITE: / '/sap/zdsl/ already exists:', lv_zdsl_guid.
-    ELSE.
-      WRITE: / 'ERROR creating /sap/zdsl/ node. RC:', sy-subrc.
-      RETURN.
-    ENDIF.
-  ELSE.
-    WRITE: / '/sap/zdsl/ already exists:', lv_zdsl_guid.
+  PERFORM create_service USING lv_sap_guid 'ZDSL' '' 'DSL Engine Root Service'
+                         CHANGING lv_zdsl_guid.
+  IF lv_zdsl_guid IS INITIAL.
+    WRITE: / 'ERROR: /sap/zdsl/ could not be created - stopping.'.
+    RETURN.
   ENDIF.
 
-  " ─── Step 3: Create /sap/zdsl/auth ───
+  " ─── Steps 3-5: services under /sap/zdsl/ ───
+  DATA lv_guid TYPE icfnodguid.
   PERFORM create_service USING lv_zdsl_guid 'AUTH' 'ZCL_HTTP_DSL_AUTH'
-    'DSL Token Authentication Endpoint'.
-
-  " ─── Step 4: Create /sap/zdsl/query ───
+    'DSL Token Authentication Endpoint' CHANGING lv_guid.
   PERFORM create_service USING lv_zdsl_guid 'QUERY' 'ZCL_HTTP_DSL_HANDLER'
-    'DSL Query Execution Endpoint'.
+    'DSL Query Execution Endpoint' CHANGING lv_guid.
 
-  " ─── Step 5: Create /sap/zdsl/console (optional) ───
   " Created without logon data, so the standard SAP logon applies and every
   " query runs as the person who opened the page.
   IF p_cons = abap_true.
     PERFORM create_service USING lv_zdsl_guid 'CONSOLE' 'ZCL_HTTP_DSL_CONSOLE'
-      'DSL Query Console (logged-on users)'.
+      'DSL Query Console (logged-on users)' CHANGING lv_guid.
   ENDIF.
 
-  COMMIT WORK.
   WRITE: / ''.
-  WRITE: / 'ICF setup complete. Verify in SICF:'.
-  WRITE: / '  /sap/zdsl/auth  → ZCL_HTTP_DSL_AUTH'.
-  WRITE: / '  /sap/zdsl/query → ZCL_HTTP_DSL_HANDLER'.
+  WRITE: / 'ICF setup finished. Verify in SICF:'.
+  WRITE: / '  /sap/zdsl/auth    → ZCL_HTTP_DSL_AUTH'.
+  WRITE: / '  /sap/zdsl/query   → ZCL_HTTP_DSL_HANDLER'.
   IF p_cons = abap_true.
     WRITE: / '  /sap/zdsl/console → ZCL_HTTP_DSL_CONSOLE (must NOT have fixed logon data)'.
   ENDIF.
@@ -121,97 +70,71 @@ START-OF-SELECTION.
   WRITE: / 'Test: https://<host>:<port>/sap/zdsl/auth should return 405 (POST only)'.
 
 *&---------------------------------------------------------------------*
-FORM create_service USING iv_parent    TYPE icfnodguid
-                          iv_name      TYPE clike
-                          iv_handler   TYPE clike
-                          iv_docu      TYPE clike.
+*& Create one ICF node under IV_PARENT unless it already exists.
+*& CV_GUID returns the node's GUID (existing or new), initial on failure.
+*&---------------------------------------------------------------------*
+FORM create_service USING    iv_parent  TYPE icfnodguid
+                             iv_name    TYPE clike
+                             iv_handler TYPE clike
+                             iv_docu    TYPE clike
+                    CHANGING cv_guid    TYPE icfnodguid.
 
-  DATA: ls_serv     TYPE icfservice,
+  DATA: lv_name     TYPE icfname,
+        lv_parent   TYPE icfparguid,
         ls_docu     TYPE icfdocu,
-        lt_handlers TYPE icfhandtbl,
-        ls_handler  LIKE LINE OF lt_handlers,
-        lv_guid     TYPE icfnodguid.
+        lt_handlers TYPE icfhndlist,
+        lv_trkorr   TYPE trkorr.
+  FIELD-SYMBOLS: <ls_handler> TYPE any,
+                 <lv_handler> TYPE any.
 
-  " Check if already exists
+  CLEAR cv_guid.
+  lv_name   = iv_name.
+  lv_parent = iv_parent.
+  ls_docu-icf_docu = iv_docu.
+
   SELECT SINGLE icfnodguid FROM icfservice
-    INTO lv_guid
-    WHERE icf_name  = iv_name
-      AND icfparguid = iv_parent.
-
+    INTO cv_guid
+    WHERE icf_name   = lv_name
+      AND icfparguid = lv_parent.
   IF sy-subrc = 0.
-    WRITE: / |  /sap/zdsl/{ to_lower( iv_name ) } already exists: { lv_guid }|.
+    WRITE: / |  { lv_name } already exists ({ cv_guid }) - left unchanged|.
     RETURN.
   ENDIF.
 
-  CLEAR: ls_serv, ls_docu.
-  ls_serv-icf_name    = iv_name.
-  ls_serv-icfparguid  = iv_parent.
-  ls_serv-icf_cclnt   = 0.
-  ls_serv-icf_mclnt   = sy-mandt.
-  ls_docu-icf_docu    = iv_docu.
-
-  " Handler entry
-  CLEAR ls_handler.
-  ls_handler-icfhandler = iv_handler.
-  APPEND ls_handler TO lt_handlers.
-
-  CALL FUNCTION 'ICFSERVICE_CREATE'
-    EXPORTING
-      icf_service   = ls_serv
-      icfdocu       = ls_docu
-      handlertable  = lt_handlers
-      icfactive     = 'X'
-      package       = 'ZDL_JSON_DSL'
-    IMPORTING
-      icfnodeguid   = lv_guid
-    EXCEPTIONS
-      already_exists = 1
-      OTHERS         = 2.
-
-  IF sy-subrc = 0.
-    WRITE: / |  Created /sap/zdsl/{ to_lower( iv_name ) }: { lv_guid }|.
-  ELSEIF sy-subrc = 1.
-    WRITE: / |  /sap/zdsl/{ to_lower( iv_name ) } already exists|.
-  ELSE.
-    WRITE: / |  ERROR creating /sap/zdsl/{ to_lower( iv_name ) }. RC: { sy-subrc }|.
-  ENDIF.
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-FORM unregister_service USING iv_name TYPE clike
-                              iv_parent_name TYPE clike.
-
-  DATA: lv_parent TYPE icfnodguid,
-        lv_guid   TYPE icfnodguid.
-
-  " Find parent
-  IF iv_parent_name = 'SAP'.
-    PERFORM get_sap_node CHANGING lv_parent.
-    IF lv_parent IS INITIAL. RETURN. ENDIF.
-  ELSE.
-    SELECT SINGLE icfnodguid FROM icfservice
-      INTO lv_parent
-      WHERE icf_name = iv_parent_name.
-  ENDIF.
-
-  IF sy-subrc <> 0. RETURN. ENDIF.
-
-  SELECT SINGLE icfnodguid FROM icfservice
-    INTO lv_guid
-    WHERE icf_name  = iv_name
-      AND icfparguid = lv_parent.
-
-  IF sy-subrc = 0.
-    CALL FUNCTION 'ICFSERVICE_DELETE'
-      EXPORTING
-        icf_name    = CONV icfname( iv_name )
-        icfparguid  = lv_parent
-      EXCEPTIONS
-        OTHERS      = 1.
-
+  " Handler list. Works whether a line of ICFHNDLIST is the handler name
+  " itself or a structure with component ICFHANDLER.
+  IF iv_handler IS NOT INITIAL.
+    APPEND INITIAL LINE TO lt_handlers ASSIGNING <ls_handler>.
+    ASSIGN COMPONENT 'ICFHANDLER' OF STRUCTURE <ls_handler> TO <lv_handler>.
     IF sy-subrc = 0.
-      WRITE: / |  Deleted { iv_name }|.
+      <lv_handler> = iv_handler.
+    ELSE.
+      <ls_handler> = iv_handler.
     ENDIF.
+  ENDIF.
+
+  cl_icf_tree=>insert_node(
+    EXPORTING
+      icf_name    = lv_name
+      icfparguid  = lv_parent
+      icfdocu     = ls_docu
+      icfhandlst  = lt_handlers
+      icfactive   = 'X'
+      package     = gc_package
+      application = space
+    IMPORTING
+      icfnodguid  = cv_guid
+    CHANGING
+      transport   = lv_trkorr
+    EXCEPTIONS
+      OTHERS      = 1 ).
+
+  IF sy-subrc = 0 AND cv_guid IS NOT INITIAL.
+    WRITE: / |  Created { lv_name } ({ cv_guid }), transport { lv_trkorr }|.
+  ELSE.
+    WRITE: / |  ERROR creating { lv_name } (INSERT_NODE sy-subrc { sy-subrc }).|,
+           / |  Create it in SICF instead: right-click the parent → New Sub-Element.|.
+    CLEAR cv_guid.
   ENDIF.
 ENDFORM.
 
